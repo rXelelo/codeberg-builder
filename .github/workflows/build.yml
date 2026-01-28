@@ -1,0 +1,274 @@
+name: Universal Codeberg Builder
+
+on:
+  repository_dispatch:
+    types: [codeberg-webhook]
+  workflow_dispatch:
+    inputs:
+      codeberg_repo:
+        description: 'Codeberg repository (username/repo)'
+        required: true
+        type: string
+      git_ref:
+        description: 'Git ref (tag, branch, or commit)'
+        required: true
+        type: string
+
+env:
+  CODEBERG_USERNAME: rXelelo
+
+jobs:
+  detect-and-build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Parse webhook data
+        id: parse
+        run: |
+          if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
+            REPO="${{ github.event.client_payload.repository.full_name }}"
+            REF="${{ github.event.client_payload.ref }}"
+            COMMIT="${{ github.event.client_payload.after }}"
+          else
+            REPO="${{ github.event.inputs.codeberg_repo }}"
+            REF="${{ github.event.inputs.git_ref }}"
+            COMMIT=""
+          fi
+          
+          echo "repo=$REPO" >> $GITHUB_OUTPUT
+          echo "ref=$REF" >> $GITHUB_OUTPUT
+          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
+          
+          # Check if it's a tag
+          if [[ "$REF" == refs/tags/* ]]; then
+            TAG="${REF#refs/tags/}"
+            echo "is_tag=true" >> $GITHUB_OUTPUT
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
+            echo "📦 Tag detected: $TAG"
+          else
+            echo "is_tag=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  Not a tag, skipping build"
+          fi
+          
+          # Extract repo name
+          REPO_NAME="${REPO##*/}"
+          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
+      
+      - name: Clone Codeberg repository
+        if: steps.parse.outputs.is_tag == 'true'
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          REPO="${{ steps.parse.outputs.repo }}"
+          TAG="${{ steps.parse.outputs.tag }}"
+          
+          # Use token from webhook payload if available, otherwise use secret
+          if [ "${{ github.event_name }}" = "repository_dispatch" ] && [ -n "${{ github.event.client_payload.codeberg_token }}" ]; then
+            TOKEN="${{ github.event.client_payload.codeberg_token }}"
+          else
+            TOKEN="${CODEBERG_TOKEN}"
+          fi
+          
+          echo "🔄 Cloning https://codeberg.org/${REPO}"
+          
+          # Clone private repository with authentication
+          if [ -n "$TOKEN" ]; then
+            # Use token for private repos
+            git clone --depth 1 --branch "$TAG" "https://oauth2:${TOKEN}@codeberg.org/${REPO}.git" source
+          else
+            # Try public clone (for public repos)
+            git clone --depth 1 --branch "$TAG" "https://codeberg.org/${REPO}.git" source
+          fi
+          
+          cd source
+          
+          echo "📋 Repository info:"
+          echo "  Repo: $REPO"
+          echo "  Tag: $TAG"
+          echo "  Commit: $(git rev-parse HEAD)"
+          
+          # Check if PKGBUILD exists
+          if [ ! -f "PKGBUILD" ]; then
+            echo "❌ No PKGBUILD found in repository"
+            exit 1
+          fi
+          
+          echo "✅ PKGBUILD found"
+      
+      - name: Detect build type
+        if: steps.parse.outputs.is_tag == 'true'
+        id: detect
+        run: |
+          cd source
+          
+          # Check for different build types
+          if [ -f "PKGBUILD" ]; then
+            echo "build_type=pkgbuild" >> $GITHUB_OUTPUT
+            echo "🏗️  Build type: Arch Linux PKGBUILD"
+          elif [ -f "Dockerfile" ]; then
+            echo "build_type=docker" >> $GITHUB_OUTPUT
+            echo "🐳 Build type: Docker"
+          elif [ -f "Makefile" ]; then
+            echo "build_type=make" >> $GITHUB_OUTPUT
+            echo "🔨 Build type: Make"
+          elif [ -f "package.json" ]; then
+            echo "build_type=npm" >> $GITHUB_OUTPUT
+            echo "📦 Build type: NPM"
+          else
+            echo "build_type=unknown" >> $GITHUB_OUTPUT
+            echo "❓ Build type: Unknown"
+          fi
+      
+      - name: Build PKGBUILD
+        if: steps.parse.outputs.is_tag == 'true' && steps.detect.outputs.build_type == 'pkgbuild'
+        run: |
+          cd source
+          
+          echo "🏗️  Building PKGBUILD in Docker..."
+          docker run --rm \
+            -v $(pwd):/workspace \
+            -w /workspace \
+            archlinux:latest \
+            bash -c '
+              set -e
+              echo "📦 Installing dependencies..."
+              pacman -Syu --noconfirm
+              pacman -S --noconfirm base-devel git fakeroot sudo
+              
+              echo "👤 Creating build user..."
+              useradd -m builder
+              echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+              chown -R builder:builder /workspace
+              
+              echo "🔨 Building package..."
+              su - builder -c "cd /workspace && makepkg -sf --noconfirm"
+              
+              echo "✅ Build complete"
+            '
+          
+          # Collect built packages
+          mkdir -p ../artifacts
+          find . -name "*.pkg.tar.zst" -exec cp {} ../artifacts/ \;
+          
+          echo "📦 Built packages:"
+          ls -lah ../artifacts/
+      
+      - name: Build Docker (if applicable)
+        if: steps.parse.outputs.is_tag == 'true' && steps.detect.outputs.build_type == 'docker'
+        run: |
+          cd source
+          TAG="${{ steps.parse.outputs.tag }}"
+          REPO="${{ steps.parse.outputs.repo_name }}"
+          
+          echo "🐳 Building Docker image..."
+          docker build -t "$REPO:$TAG" .
+          
+          echo "💾 Saving Docker image..."
+          mkdir -p ../artifacts
+          docker save "$REPO:$TAG" | gzip > "../artifacts/${REPO}-${TAG}.tar.gz"
+      
+      - name: Build with Make (if applicable)
+        if: steps.parse.outputs.is_tag == 'true' && steps.detect.outputs.build_type == 'make'
+        run: |
+          cd source
+          echo "🔨 Building with Make..."
+          make
+          
+          mkdir -p ../artifacts
+          # Copy build artifacts (customize based on your Makefile)
+          cp -r dist/* ../artifacts/ 2>/dev/null || true
+          cp -r build/* ../artifacts/ 2>/dev/null || true
+      
+      - name: Create release on Codeberg
+        if: steps.parse.outputs.is_tag == 'true' && steps.detect.outputs.build_type == 'pkgbuild'
+        env:
+          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+        run: |
+          REPO="${{ steps.parse.outputs.repo }}"
+          TAG="${{ steps.parse.outputs.tag }}"
+          
+          cd source
+          COMMIT_MSG=$(git log -1 --pretty=%B)
+          
+          echo "🚀 Creating release on Codeberg..."
+          
+          # Create release
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
+            -H "Authorization: token ${CODEBERG_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"tag_name\": \"${TAG}\",
+              \"name\": \"Release ${TAG}\",
+              \"body\": \"🤖 Automated build via GitHub Actions\\n\\n**Commit message:**\\n${COMMIT_MSG}\\n\\n---\\nBuilt on: $(date -u +'%Y-%m-%d %H:%M:%S UTC')\",
+              \"draft\": false,
+              \"prerelease\": false
+            }" \
+            "https://codeberg.org/api/v1/repos/${REPO}/releases")
+          
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+          
+          echo "HTTP Status: $HTTP_CODE"
+          echo "Response: $BODY"
+          
+          if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+            RELEASE_ID=$(echo "$BODY" | jq -r '.id')
+            echo "✅ Release created with ID: $RELEASE_ID"
+            echo "release_id=$RELEASE_ID" >> $GITHUB_ENV
+          else
+            echo "❌ Failed to create release"
+            echo "Trying to get existing release..."
+            
+            # Try to get existing release
+            EXISTING=$(curl -s \
+              -H "Authorization: token ${CODEBERG_TOKEN}" \
+              "https://codeberg.org/api/v1/repos/${REPO}/releases/tags/${TAG}")
+            
+            RELEASE_ID=$(echo "$EXISTING" | jq -r '.id')
+            
+            if [ "$RELEASE_ID" != "null" ] && [ -n "$RELEASE_ID" ]; then
+              echo "ℹ️  Using existing release ID: $RELEASE_ID"
+              echo "release_id=$RELEASE_ID" >> $GITHUB_ENV
+            else
+              echo "❌ Could not create or find release"
+              exit 1
+            fi
+          fi
+          
+          # Upload artifacts
+          echo "📤 Uploading artifacts..."
+          for ARTIFACT in ../artifacts/*; do
+            if [ -f "$ARTIFACT" ]; then
+              FILENAME=$(basename "$ARTIFACT")
+              echo "  Uploading: $FILENAME"
+              
+              curl -X POST \
+                -H "Authorization: token ${CODEBERG_TOKEN}" \
+                -F "attachment=@${ARTIFACT}" \
+                "https://codeberg.org/api/v1/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${FILENAME}"
+              
+              echo "  ✅ Uploaded: $FILENAME"
+            fi
+          done
+          
+          echo ""
+          echo "🎉 Release published successfully!"
+          echo "🔗 https://codeberg.org/${REPO}/releases/tag/${TAG}"
+      
+      - name: Summary
+        if: always()
+        run: |
+          echo "### Build Summary 📊" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Repository:** ${{ steps.parse.outputs.repo }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Ref:** ${{ steps.parse.outputs.ref }}" >> $GITHUB_STEP_SUMMARY
+          
+          if [ "${{ steps.parse.outputs.is_tag }}" = "true" ]; then
+            echo "- **Tag:** ${{ steps.parse.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Build Type:** ${{ steps.detect.outputs.build_type }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Status:** ✅ Built and released" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "🔗 [View Release](https://codeberg.org/${{ steps.parse.outputs.repo }}/releases/tag/${{ steps.parse.outputs.tag }})" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- **Status:** ⏭️  Skipped (not a tag)" >> $GITHUB_STEP_SUMMARY
+          fi
