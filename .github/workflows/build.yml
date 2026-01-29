@@ -188,17 +188,34 @@ jobs:
                 su - builder -c "gpg --batch --import $GPG_KEY_FILE"
                 su - builder -c "echo \"allow-loopback-pinentry\" >> ~/.gnupg/gpg-agent.conf"
                 su - builder -c "echo \"pinentry-mode loopback\" >> ~/.gnupg/gpg.conf"
+                su - builder -c "echo \"default-cache-ttl 21600\" >> ~/.gnupg/gpg-agent.conf"
                 su - builder -c "gpgconf --kill gpg-agent"
                 su - builder -c "gpgconf --launch gpg-agent"
                 
-                # Configure makepkg for signing
+                # Trust the key ultimately
+                KEY_FINGERPRINT=$(su - builder -c "gpg --list-keys --with-colons $GPG_KEY_ID | grep fpr | head -1 | cut -d: -f10")
+                su - builder -c "echo \"$KEY_FINGERPRINT:6:\" | gpg --import-ownertrust"
+                
+                # Configure makepkg for signing with passphrase file
                 su - builder -c "echo \"BUILDENV=(!distcc color !ccache check sign)\" >> ~/.makepkg.conf"
                 su - builder -c "echo \"GPGKEY=\\\"$GPG_KEY_ID\\\"\" >> ~/.makepkg.conf"
+                
+                # Store passphrase for signing
+                if [ -n "$GPG_PASSPHRASE" ]; then
+                  echo "$GPG_PASSPHRASE" > /tmp/gpg-passphrase
+                  chmod 600 /tmp/gpg-passphrase
+                  chown builder:builder /tmp/gpg-passphrase
+                fi
+                
                 echo "✅ Package signing enabled"
               fi
               
               echo "🔨 Building package..."
-              su - builder -c "cd /workspace && GNUPGHOME=/home/builder/.gnupg GPG_TTY=\$(tty) makepkg -sf --noconfirm --sign"
+              if [ -n "$GPG_KEY_FILE" ] && [ -f "/tmp/gpg-passphrase" ]; then
+                su - builder -c "cd /workspace && export GNUPGHOME=/home/builder/.gnupg && export GPG_TTY=\$(tty) && makepkg -sf --noconfirm && for pkg in *.pkg.tar.zst; do echo \"Signing \$pkg...\"; cat /tmp/gpg-passphrase | gpg --batch --yes --passphrase-fd 0 --pinentry-mode loopback --detach-sign -u $GPG_KEY_ID \"\$pkg\" 2>&1 | grep -v 'gpg: WARNING'; done"
+              else
+                su - builder -c "cd /workspace && export GNUPGHOME=/home/builder/.gnupg && export GPG_TTY=\$(tty) && makepkg -sf --noconfirm"
+              fi
               
               echo "✅ Build complete"
             '
