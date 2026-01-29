@@ -119,39 +119,106 @@ jobs:
             echo "❓ Build type: Unknown"
           fi
       
+      - name: Setup GPG signing key
+        if: steps.parse.outputs.is_tag == 'true' && steps.detect.outputs.build_type == 'pkgbuild'
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          if [ -n "$GPG_PRIVATE_KEY" ]; then
+            echo "🔑 Setting up GPG key..."
+            
+            # Import GPG key
+            echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+            
+            # Get key ID
+            KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | head -n1 | awk '{print $2}' | cut -d'/' -f2)
+            echo "GPG_KEY_ID=$KEY_ID" >> $GITHUB_ENV
+            
+            # Configure GPG for non-interactive use
+            echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
+            echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
+            gpgconf --kill gpg-agent
+            gpgconf --launch gpg-agent
+            
+            echo "✅ GPG key configured (ID: $KEY_ID)"
+          else
+            echo "⚠️  No GPG key found, packages will not be signed"
+          fi
+      
       - name: Build PKGBUILD
         if: steps.parse.outputs.is_tag == 'true' && steps.detect.outputs.build_type == 'pkgbuild'
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
         run: |
           cd source
+          
+          # Export GPG key to file if available
+          if [ -n "${{ env.GPG_KEY_ID }}" ]; then
+            gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
+              --export-secret-keys "${{ env.GPG_KEY_ID }}" > /tmp/signing-key.gpg
+            GPG_KEY_FILE="/tmp/signing-key.gpg"
+          else
+            GPG_KEY_FILE=""
+          fi
           
           echo "🏗️  Building PKGBUILD in Docker..."
           docker run --rm \
             -v $(pwd):/workspace \
+            -v /tmp:/tmp:ro \
             -w /workspace \
+            -e GPG_KEY_FILE="$GPG_KEY_FILE" \
+            -e GPG_PASSPHRASE="$GPG_PASSPHRASE" \
+            -e GPG_KEY_ID="${{ env.GPG_KEY_ID }}" \
             archlinux:latest \
             bash -c '
               set -e
               echo "📦 Installing dependencies..."
               pacman -Syu --noconfirm
-              pacman -S --noconfirm base-devel git fakeroot sudo
+              pacman -S --noconfirm base-devel git fakeroot sudo gnupg
               
               echo "👤 Creating build user..."
               useradd -m builder
               echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
               chown -R builder:builder /workspace
               
+              # Import GPG key if available
+              if [ -n "$GPG_KEY_FILE" ] && [ -f "$GPG_KEY_FILE" ]; then
+                echo "🔑 Importing GPG key for signing..."
+                su - builder -c "gpg --batch --import $GPG_KEY_FILE"
+                su - builder -c "echo \"allow-loopback-pinentry\" >> ~/.gnupg/gpg-agent.conf"
+                su - builder -c "echo \"pinentry-mode loopback\" >> ~/.gnupg/gpg.conf"
+                su - builder -c "gpgconf --kill gpg-agent"
+                su - builder -c "gpgconf --launch gpg-agent"
+                
+                # Configure makepkg for signing
+                su - builder -c "echo \"BUILDENV=(!distcc color !ccache check sign)\" >> ~/.makepkg.conf"
+                su - builder -c "echo \"GPGKEY=\\\"$GPG_KEY_ID\\\"\" >> ~/.makepkg.conf"
+                echo "✅ Package signing enabled"
+              fi
+              
               echo "🔨 Building package..."
-              su - builder -c "cd /workspace && makepkg -sf --noconfirm"
+              su - builder -c "cd /workspace && GNUPGHOME=/home/builder/.gnupg GPG_TTY=\$(tty) makepkg -sf --noconfirm --sign"
               
               echo "✅ Build complete"
             '
           
-          # Collect built packages
-          mkdir -p ../artifacts
-          find . -name "*.pkg.tar.zst" -exec cp {} ../artifacts/ \;
+          # Clean up GPG key file
+          rm -f /tmp/signing-key.gpg
           
-          echo "📦 Built packages:"
+          # Collect built packages (exclude debug packages)
+          mkdir -p ../artifacts
+          find . -name "*.pkg.tar.zst" ! -name "*-debug-*.pkg.tar.zst" -exec cp {} ../artifacts/ \;
+          find . -name "*.pkg.tar.zst.sig" ! -name "*-debug-*.pkg.tar.zst.sig" -exec cp {} ../artifacts/ \;
+          
+          echo "📦 Built packages (excluding debug):"
           ls -lah ../artifacts/
+          
+          # Count packages
+          PKG_COUNT=$(find ../artifacts -name "*.pkg.tar.zst" | wc -l)
+          SIG_COUNT=$(find ../artifacts -name "*.pkg.tar.zst.sig" | wc -l)
+          echo "  Packages: $PKG_COUNT"
+          echo "  Signatures: $SIG_COUNT"
       
       - name: Build Docker (if applicable)
         if: steps.parse.outputs.is_tag == 'true' && steps.detect.outputs.build_type == 'docker'
