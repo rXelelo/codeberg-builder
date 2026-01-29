@@ -156,8 +156,8 @@ jobs:
           # Export GPG key to file if available
           if [ -n "${{ env.GPG_KEY_ID }}" ]; then
             gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
-              --export-secret-keys "${{ env.GPG_KEY_ID }}" > /tmp/signing-key.gpg
-            GPG_KEY_FILE="/tmp/signing-key.gpg"
+              --export-secret-keys "${{ env.GPG_KEY_ID }}" > signing-key.gpg
+            GPG_KEY_FILE="signing-key.gpg"
           else
             GPG_KEY_FILE=""
           fi
@@ -165,7 +165,6 @@ jobs:
           echo "🏗️  Building PKGBUILD in Docker..."
           docker run --rm \
             -v $(pwd):/workspace \
-            -v /tmp:/tmp:ro \
             -w /workspace \
             -e GPG_KEY_FILE="$GPG_KEY_FILE" \
             -e GPG_PASSPHRASE="$GPG_PASSPHRASE" \
@@ -200,19 +199,19 @@ jobs:
                 su - builder -c "echo \"BUILDENV=(!distcc color !ccache check sign)\" >> ~/.makepkg.conf"
                 su - builder -c "echo \"GPGKEY=\\\"$GPG_KEY_ID\\\"\" >> ~/.makepkg.conf"
                 
-                # Store passphrase for signing
+                # Store passphrase for signing in workspace
                 if [ -n "$GPG_PASSPHRASE" ]; then
-                  echo "$GPG_PASSPHRASE" > /tmp/gpg-passphrase
-                  chmod 600 /tmp/gpg-passphrase
-                  chown builder:builder /tmp/gpg-passphrase
+                  echo "$GPG_PASSPHRASE" > /workspace/.gpg-passphrase
+                  chmod 600 /workspace/.gpg-passphrase
+                  chown builder:builder /workspace/.gpg-passphrase
                 fi
                 
                 echo "✅ Package signing enabled"
               fi
               
               echo "🔨 Building package..."
-              if [ -n "$GPG_KEY_FILE" ] && [ -f "/tmp/gpg-passphrase" ]; then
-                su - builder -c "cd /workspace && export GNUPGHOME=/home/builder/.gnupg && export GPG_TTY=\$(tty) && makepkg -sf --noconfirm && for pkg in *.pkg.tar.zst; do echo \"Signing \$pkg...\"; cat /tmp/gpg-passphrase | gpg --batch --yes --passphrase-fd 0 --pinentry-mode loopback --detach-sign -u $GPG_KEY_ID \"\$pkg\" 2>&1 | grep -v 'gpg: WARNING'; done"
+              if [ -n "$GPG_KEY_FILE" ] && [ -f "/workspace/.gpg-passphrase" ]; then
+                su - builder -c "cd /workspace && export GNUPGHOME=/home/builder/.gnupg && export GPG_TTY=\$(tty) && makepkg -sf --noconfirm && for pkg in *.pkg.tar.zst; do echo \"Signing \$pkg...\"; cat .gpg-passphrase | gpg --batch --yes --passphrase-fd 0 --pinentry-mode loopback --detach-sign -u $GPG_KEY_ID \"\$pkg\" 2>&1 | grep -v 'gpg: WARNING'; done && rm -f .gpg-passphrase"
               else
                 su - builder -c "cd /workspace && export GNUPGHOME=/home/builder/.gnupg && export GPG_TTY=\$(tty) && makepkg -sf --noconfirm"
               fi
@@ -221,7 +220,7 @@ jobs:
             '
           
           # Clean up GPG key file
-          rm -f /tmp/signing-key.gpg
+          rm -f signing-key.gpg
           
           # Collect built packages (exclude debug packages)
           mkdir -p ../artifacts
