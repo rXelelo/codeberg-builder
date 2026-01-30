@@ -99,7 +99,7 @@ jobs:
           AUTH="Authorization: token ${{ secrets.CODEBERG_TOKEN }}"
 
           # 1. Create or Find the Release
-          echo "Creating release for $TAG..."
+          echo "Creating/Finding release for $TAG..."
           RELEASE_JSON=$(curl -s -X POST "$API_URL" \
             -H "$AUTH" -H "Content-Type: application/json" \
             -d "{\"tag_name\":\"$TAG\",\"name\":\"Release $TAG\",\"body\":\"Automated Build\"}")
@@ -107,30 +107,32 @@ jobs:
           RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
           
           if [ "$RELEASE_ID" == "null" ] || [ -z "$RELEASE_ID" ]; then
-            echo "Release might already exist, fetching ID..."
+            echo "Release exists, fetching ID..."
             RELEASE_ID=$(curl -s -H "$AUTH" "$API_URL/tags/$TAG" | jq -r '.id')
           fi
           
           echo "Using Release ID: $RELEASE_ID"
 
-          # 2. Upload Artifacts with Retries and Large File Support
+          # 2. Upload Artifacts
           for file in dist/*; do
             [ -e "$file" ] || continue
             FILENAME=$(basename "$file")
-            echo "Uploading $FILENAME..."
+            echo "Uploading $FILENAME (Size: $(du -h "$file" | cut -f1))..."
             
-            # Using --retry 3 to handle temporary connection resets
-            # Using -T (transfer) can sometimes be more stable for huge files than -F
-            curl -X POST "$API_URL/$RELEASE_ID/assets?name=$FILENAME" \
+            # Using -T (upload) with --retry and --keepalive for stability
+            # Removed --buffer-size to fix the Exit Code 2 error
+            curl -v -X POST "$API_URL/$RELEASE_ID/assets?name=$FILENAME" \
               -H "$AUTH" \
               -H "Content-Type: application/octet-stream" \
+              -H "Expect: " \
               --retry 5 \
               --retry-delay 10 \
-              --max-time 3600 \
-              --buffer-size 1M \
+              --connect-timeout 60 \
+              --no-buffer \
+              --keepalive-time 60 \
               -T "$file"
               
-            echo "Successfully uploaded $FILENAME"
+            echo "✅ Successfully uploaded $FILENAME"
           done
       - name: Generate GitHub Summary
         if: always()
