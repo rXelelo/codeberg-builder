@@ -1,4 +1,4 @@
-name: Universal Codeberg Builder
+name: Universal Codeberg Builder (GitHub Runner)
 
 on:
   repository_dispatch:
@@ -8,11 +8,9 @@ on:
       codeberg_repo:
         description: 'Codeberg repository (username/repo)'
         required: true
-        type: string
       git_ref:
         description: 'Git ref (tag, branch, or commit)'
         required: true
-        type: string
 
 env:
   CODEBERG_USERNAME: rXelelo
@@ -22,341 +20,108 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-      - name: Parse webhook data
+      - name: Parse Trigger Data
         id: parse
         run: |
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
             REPO="${{ github.event.client_payload.repository.full_name }}"
             REF="${{ github.event.client_payload.ref }}"
-            COMMIT="${{ github.event.client_payload.after }}"
           else
             REPO="${{ github.event.inputs.codeberg_repo }}"
             REF="${{ github.event.inputs.git_ref }}"
-            COMMIT=""
           fi
           
-          echo "repo=$REPO" >> $GITHUB_OUTPUT
-          echo "ref=$REF" >> $GITHUB_OUTPUT
-          echo "commit=$COMMIT" >> $GITHUB_OUTPUT
-          
-          # Check if it's a tag
+          # Check for tag
           if [[ "$REF" == refs/tags/* ]]; then
             TAG="${REF#refs/tags/}"
             echo "is_tag=true" >> $GITHUB_OUTPUT
             echo "tag=$TAG" >> $GITHUB_OUTPUT
-            echo "📦 Tag detected: $TAG"
           else
             echo "is_tag=false" >> $GITHUB_OUTPUT
-            echo "ℹ️  Not a tag, skipping build"
           fi
           
-          # Extract repo name
-          REPO_NAME="${REPO##*/}"
-          echo "repo_name=$REPO_NAME" >> $GITHUB_OUTPUT
-      
-      - name: Clone Codeberg repository
+          echo "repo=$REPO" >> $GITHUB_OUTPUT
+          echo "repo_name=${REPO##*/}" >> $GITHUB_OUTPUT
+
+      - name: Clone Codeberg Source
         if: steps.parse.outputs.is_tag == 'true'
-        env:
-          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
         run: |
-          REPO="${{ steps.parse.outputs.repo }}"
-          TAG="${{ steps.parse.outputs.tag }}"
-          
-          # Use token from webhook payload if available, otherwise use secret
-          if [ "${{ github.event_name }}" = "repository_dispatch" ] && [ -n "${{ github.event.client_payload.codeberg_token }}" ]; then
-            TOKEN="${{ github.event.client_payload.codeberg_token }}"
-          else
-            TOKEN="${CODEBERG_TOKEN}"
-          fi
-          
-          echo "🔄 Cloning https://codeberg.org/${REPO}"
-          
-          # Clone private repository with authentication
-          if [ -n "$TOKEN" ]; then
-            # Use token for private repos
-            git clone --depth 1 --branch "$TAG" "https://oauth2:${TOKEN}@codeberg.org/${REPO}.git" source
-          else
-            # Try public clone (for public repos)
-            git clone --depth 1 --branch "$TAG" "https://codeberg.org/${REPO}.git" source
-          fi
-          
-          cd source
-          
-          echo "📋 Repository info:"
-          echo "  Repo: $REPO"
-          echo "  Tag: $TAG"
-          echo "  Commit: $(git rev-parse HEAD)"
-          
-          # Check if PKGBUILD exists
-          if [ ! -f "PKGBUILD" ]; then
-            echo "❌ No PKGBUILD found in repository"
-            exit 1
-          fi
-          
-          echo "✅ PKGBUILD found"
-      
-      - name: Detect build type
+          # Use Token for Auth to handle private repos
+          git clone --depth 1 --branch ${{ steps.parse.outputs.tag }} \
+            "https://oauth2:${{ secrets.CODEBERG_TOKEN }}@codeberg.org/${{ steps.parse.outputs.repo }}.git" source
+
+      - name: Build & Sign PKGBUILD (Inside Arch Container)
         if: steps.parse.outputs.is_tag == 'true'
-        id: detect
+        id: build
+        shell: bash
         run: |
           cd source
-          
-          # Check for different build types
-          if [ -f "PKGBUILD" ]; then
-            echo "build_type=pkgbuild" >> $GITHUB_OUTPUT
-            echo "🏗️  Build type: Arch Linux PKGBUILD"
-          elif [ -f "Dockerfile" ]; then
-            echo "build_type=docker" >> $GITHUB_OUTPUT
-            echo "🐳 Build type: Docker"
-          elif [ -f "Makefile" ]; then
-            echo "build_type=make" >> $GITHUB_OUTPUT
-            echo "🔨 Build type: Make"
-          elif [ -f "package.json" ]; then
-            echo "build_type=npm" >> $GITHUB_OUTPUT
-            echo "📦 Build type: NPM"
-          else
-            echo "build_type=unknown" >> $GITHUB_OUTPUT
-            echo "❓ Build type: Unknown"
-          fi
-      
-      - name: Setup GPG signing key
-        if: steps.parse.outputs.is_tag == 'true' && steps.detect.outputs.build_type == 'pkgbuild'
-        env:
-          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-        run: |
-          if [ -n "$GPG_PRIVATE_KEY" ]; then
-            echo "🔑 Setting up GPG key..."
-            
-            # Import GPG key
-            echo "$GPG_PRIVATE_KEY" | gpg --batch --import
-            
-            # Get key ID
-            KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | head -n1 | awk '{print $2}' | cut -d'/' -f2)
-            echo "GPG_KEY_ID=$KEY_ID" >> $GITHUB_ENV
-            
-            # Configure GPG for non-interactive use
-            echo "allow-loopback-pinentry" >> ~/.gnupg/gpg-agent.conf
-            echo "pinentry-mode loopback" >> ~/.gnupg/gpg.conf
-            gpgconf --kill gpg-agent
-            gpgconf --launch gpg-agent
-            
-            echo "✅ GPG key configured (ID: $KEY_ID)"
-          else
-            echo "⚠️  No GPG key found, packages will not be signed"
-          fi
-      
-      - name: Build PKGBUILD
-        if: steps.parse.outputs.is_tag == 'true' && steps.detect.outputs.build_type == 'pkgbuild'
-        env:
-          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
-        run: |
-          cd source
-          
-          # Export GPG key to file if available in the workspace
-          if [ -n "${{ env.GPG_KEY_ID }}" ]; then
-            gpg --batch --yes --pinentry-mode loopback --passphrase "$GPG_PASSPHRASE" \
-              --export-secret-keys "${{ env.GPG_KEY_ID }}" > signing-key.gpg
-            HAS_GPG_KEY="true"
-          else
-            HAS_GPG_KEY="false"
-          fi
-          
-          echo "🏗️  Building PKGBUILD in Docker..."
+          if [ ! -f "PKGBUILD" ]; then echo "No PKGBUILD, skipping Arch build"; exit 0; fi
+
+          # We run the build inside Arch Linux to ensure native tool compatibility
           docker run --rm \
             -v $(pwd):/workspace \
             -w /workspace \
-            -e HAS_GPG_KEY="$HAS_GPG_KEY" \
-            -e GPG_PASSPHRASE="$GPG_PASSPHRASE" \
-            -e GPG_KEY_ID="${{ env.GPG_KEY_ID }}" \
-            archlinux:latest \
+            -e GPG_PRIVATE_KEY="${{ secrets.GPG_PRIVATE_KEY }}" \
+            -e GPG_PASSPHRASE="${{ secrets.GPG_PASSPHRASE }}" \
+            archlinux:base-devel \
             bash -c '
-              set -e
-              echo "📦 Installing dependencies..."
-              pacman -Syu --noconfirm
-              pacman -S --noconfirm base-devel git fakeroot sudo gnupg
-              
-              echo "👤 Creating build user..."
-              useradd -m builder
-              echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+              pacman -Syu --noconfirm gnupg sudo
+              useradd -m builder && echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
               chown -R builder:builder /workspace
               
-              # Import GPG key if available
-              if [ "$HAS_GPG_KEY" = "true" ] && [ -f "/workspace/signing-key.gpg" ]; then
-                echo "🔑 Importing GPG key for signing..."
-                su - builder -c "gpg --batch --import /workspace/signing-key.gpg"
-                su - builder -c "echo \"allow-loopback-pinentry\" >> ~/.gnupg/gpg-agent.conf"
-                su - builder -c "echo \"pinentry-mode loopback\" >> ~/.gnupg/gpg.conf"
-                su - builder -c "echo \"default-cache-ttl 21600\" >> ~/.gnupg/gpg-agent.conf"
-                su - builder -c "gpgconf --kill gpg-agent"
-                su - builder -c "gpgconf --launch gpg-agent"
-                
-                # Trust the key ultimately
-                KEY_FINGERPRINT=$(su - builder -c "gpg --list-keys --with-colons $GPG_KEY_ID | grep fpr | head -1 | cut -d: -f10")
-                su - builder -c "echo \"$KEY_FINGERPRINT:6:\" | gpg --import-ownertrust"
-                
-                # Configure makepkg (don't sign during build, we'll sign after)
-                su - builder -c "echo \"BUILDENV=(!distcc color !ccache check !sign)\" >> ~/.makepkg.conf"
-                
-                # Store passphrase for signing in workspace
-                if [ -n "$GPG_PASSPHRASE" ]; then
-                  echo "$GPG_PASSPHRASE" > /workspace/.gpg-passphrase
-                  chmod 600 /workspace/.gpg-passphrase
-                  chown builder:builder /workspace/.gpg-passphrase
-                fi
-                
-                echo "✅ Package signing enabled"
-              fi
+              # Import GPG
+              echo "$GPG_PRIVATE_KEY" | su builder -c "gpg --batch --import"
               
+              # Build Package
+              su builder -c "makepkg -sf --noconfirm"
               
-              echo "🔨 Building package..."
-              # First build the package
-              su - builder -c "cd /workspace && export GNUPGHOME=/home/builder/.gnupg && export GPG_TTY=\$(tty) && makepkg -sf --noconfirm"
-              
-              # Then sign packages if GPG is configured
-              if [ "$HAS_GPG_KEY" = "true" ] && [ -f "/workspace/.gpg-passphrase" ]; then
-                echo "🔏 Signing packages..."
-                su - builder -c "cd /workspace && export GNUPGHOME=/home/builder/.gnupg && for pkg in *.pkg.tar.zst; do if [[ \$pkg != *-debug-* ]]; then echo \"  📝 Signing \$pkg...\"; cat .gpg-passphrase | gpg --batch --yes --passphrase-fd 0 --pinentry-mode loopback --detach-sign -u $GPG_KEY_ID \"\$pkg\" 2>&1 || echo \"    ⚠️  Failed to sign \$pkg\"; if [ -f \"\$pkg.sig\" ]; then echo \"    ✅ Signature created: \$pkg.sig\"; fi; else echo \"  ⏭️  Skipping debug package: \$pkg\"; fi; done"
-                rm -f /workspace/.gpg-passphrase
-                echo "✅ Signing complete"
-              fi
-              
-              echo "✅ Build complete"
+              # Sign (Skipping debug packages)
+              for pkg in *.pkg.tar.zst; do
+                [[ "$pkg" == *"-debug-"* ]] && continue
+                echo "Signing $pkg..."
+                echo "$GPG_PASSPHRASE" | su builder -c "gpg --batch --yes --passphrase-fd 0 --detach-sign --armor $pkg"
+              done
             '
           
-          # Clean up GPG key file
-          rm -f signing-key.gpg
-          
-          # Collect built packages (exclude debug packages)
-          mkdir -p ../artifacts
-          find . -name "*.pkg.tar.zst" ! -name "*-debug-*.pkg.tar.zst" -exec cp {} ../artifacts/ \;
-          find . -name "*.pkg.tar.zst.sig" ! -name "*-debug-*.pkg.tar.zst.sig" -exec cp {} ../artifacts/ \;
-          
-          echo "📦 Built packages (excluding debug):"
-          ls -lah ../artifacts/
-          
-          # Count packages
-          PKG_COUNT=$(find ../artifacts -name "*.pkg.tar.zst" | wc -l)
-          SIG_COUNT=$(find ../artifacts -name "*.pkg.tar.zst.sig" | wc -l)
-          echo "  Packages: $PKG_COUNT"
-          echo "  Signatures: $SIG_COUNT"
-      
-      - name: Build Docker (if applicable)
-        if: steps.parse.outputs.is_tag == 'true' && steps.detect.outputs.build_type == 'docker'
-        run: |
-          cd source
-          TAG="${{ steps.parse.outputs.tag }}"
-          REPO="${{ steps.parse.outputs.repo_name }}"
-          
-          echo "🐳 Building Docker image..."
-          docker build -t "$REPO:$TAG" .
-          
-          echo "💾 Saving Docker image..."
-          mkdir -p ../artifacts
-          docker save "$REPO:$TAG" | gzip > "../artifacts/${REPO}-${TAG}.tar.gz"
-      
-      - name: Build with Make (if applicable)
-        if: steps.parse.outputs.is_tag == 'true' && steps.detect.outputs.build_type == 'make'
-        run: |
-          cd source
-          echo "🔨 Building with Make..."
-          make
-          
-          mkdir -p ../artifacts
-          # Copy build artifacts (customize based on your Makefile)
-          cp -r dist/* ../artifacts/ 2>/dev/null || true
-          cp -r build/* ../artifacts/ 2>/dev/null || true
-      
-      - name: Create release on Codeberg
-        if: steps.parse.outputs.is_tag == 'true' && steps.detect.outputs.build_type == 'pkgbuild'
-        env:
-          CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
+          # Move assets to a clean folder for upload
+          mkdir -p ../dist
+          cp *.pkg.tar.zst *.pkg.tar.zst.asc ../dist/ 2>/dev/null || true
+          # Specifically remove debug symbols from the dist folder
+          rm -f ../dist/*-debug-*
+
+      - name: Create Release & Upload to Codeberg
+        if: steps.parse.outputs.is_tag == 'true'
         run: |
           REPO="${{ steps.parse.outputs.repo }}"
           TAG="${{ steps.parse.outputs.tag }}"
+          API_URL="https://codeberg.org/api/v1/repos/$REPO/releases"
+          AUTH="Authorization: token ${{ secrets.CODEBERG_TOKEN }}"
+
+          # 1. Create the Release
+          RELEASE_JSON=$(curl -s -X POST "$API_URL" \
+            -H "$AUTH" -H "Content-Type: application/json" \
+            -d "{\"tag_name\":\"$TAG\",\"name\":\"Release $TAG\",\"body\":\"Automated Build\"}")
           
-          cd source
-          COMMIT_MSG=$(git log -1 --pretty=%B)
+          RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
           
-          echo "🚀 Creating release on Codeberg..."
-          
-          # Create release
-          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST \
-            -H "Authorization: token ${CODEBERG_TOKEN}" \
-            -H "Content-Type: application/json" \
-            -d "{
-              \"tag_name\": \"${TAG}\",
-              \"name\": \"Release ${TAG}\",
-              \"body\": \"🤖 Automated build via GitHub Actions\\n\\n**Commit message:**\\n${COMMIT_MSG}\\n\\n---\\nBuilt on: $(date -u +'%Y-%m-%d %H:%M:%S UTC')\",
-              \"draft\": false,
-              \"prerelease\": false
-            }" \
-            "https://codeberg.org/api/v1/repos/${REPO}/releases")
-          
-          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
-          BODY=$(echo "$RESPONSE" | sed '$d')
-          
-          echo "HTTP Status: $HTTP_CODE"
-          echo "Response: $BODY"
-          
-          if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
-            RELEASE_ID=$(echo "$BODY" | jq -r '.id')
-            echo "✅ Release created with ID: $RELEASE_ID"
-            echo "release_id=$RELEASE_ID" >> $GITHUB_ENV
-          else
-            echo "❌ Failed to create release"
-            echo "Trying to get existing release..."
-            
-            # Try to get existing release
-            EXISTING=$(curl -s \
-              -H "Authorization: token ${CODEBERG_TOKEN}" \
-              "https://codeberg.org/api/v1/repos/${REPO}/releases/tags/${TAG}")
-            
-            RELEASE_ID=$(echo "$EXISTING" | jq -r '.id')
-            
-            if [ "$RELEASE_ID" != "null" ] && [ -n "$RELEASE_ID" ]; then
-              echo "ℹ️  Using existing release ID: $RELEASE_ID"
-              echo "release_id=$RELEASE_ID" >> $GITHUB_ENV
-            else
-              echo "❌ Could not create or find release"
-              exit 1
-            fi
+          # If 409 (already exists), fetch existing ID
+          if [ "$RELEASE_ID" == "null" ]; then
+            RELEASE_ID=$(curl -s -H "$AUTH" "$API_URL/tags/$TAG" | jq -r '.id')
           fi
-          
-          # Upload artifacts
-          echo "📤 Uploading artifacts..."
-          for ARTIFACT in ../artifacts/*; do
-            if [ -f "$ARTIFACT" ]; then
-              FILENAME=$(basename "$ARTIFACT")
-              echo "  Uploading: $FILENAME"
-              
-              curl -X POST \
-                -H "Authorization: token ${CODEBERG_TOKEN}" \
-                -F "attachment=@${ARTIFACT}" \
-                "https://codeberg.org/api/v1/repos/${REPO}/releases/${RELEASE_ID}/assets?name=${FILENAME}"
-              
-              echo "  ✅ Uploaded: $FILENAME"
-            fi
+
+          # 2. Upload Artifacts
+          for file in dist/*; do
+            [ -e "$file" ] || continue
+            echo "Uploading $(basename $file)..."
+            curl -X POST "$API_URL/$RELEASE_ID/assets?name=$(basename $file)" \
+              -H "$AUTH" -F "attachment=@$file"
           done
-          
-          echo ""
-          echo "🎉 Release published successfully!"
-          echo "🔗 https://codeberg.org/${REPO}/releases/tag/${TAG}"
-      
-      - name: Summary
+
+      - name: Generate GitHub Summary
         if: always()
         run: |
-          echo "### Build Summary 📊" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Repository:** ${{ steps.parse.outputs.repo }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Ref:** ${{ steps.parse.outputs.ref }}" >> $GITHUB_STEP_SUMMARY
-          
-          if [ "${{ steps.parse.outputs.is_tag }}" = "true" ]; then
-            echo "- **Tag:** ${{ steps.parse.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Build Type:** ${{ steps.detect.outputs.build_type }}" >> $GITHUB_STEP_SUMMARY
-            echo "- **Status:** ✅ Built and released" >> $GITHUB_STEP_SUMMARY
-            echo "" >> $GITHUB_STEP_SUMMARY
-            echo "🔗 [View Release](https://codeberg.org/${{ steps.parse.outputs.repo }}/releases/tag/${{ steps.parse.outputs.tag }})" >> $GITHUB_STEP_SUMMARY
-          else
-            echo "- **Status:** ⏭️  Skipped (not a tag)" >> $GITHUB_STEP_SUMMARY
-          fi
+          echo "### 📦 Codeberg Build Result" >> $GITHUB_STEP_SUMMARY
+          echo "Repo: ${{ steps.parse.outputs.repo }}" >> $GITHUB_STEP_SUMMARY
+          echo "Tag: ${{ steps.parse.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
