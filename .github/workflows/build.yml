@@ -91,28 +91,50 @@ jobs:
         run: |
           REPO="${{ steps.parse.outputs.repo }}"
           TAG="${{ steps.parse.outputs.tag }}"
+          REPO_NAME="${{ steps.parse.outputs.repo_name }}"
+          # Capture build time in UTC
+          BUILD_TIME=$(date -u +'%Y-%m-%d %H:%M:%S UTC')
+          
           API_URL="https://codeberg.org/api/v1/repos/$REPO/releases"
           AUTH="Authorization: token ${{ secrets.CODEBERG_TOKEN }}"
 
-          # Get Release ID
-          RELEASE_ID=$(curl -s -H "$AUTH" "$API_URL/tags/$TAG" | jq -r '.id')
+          # Construct the release message body
+          RELEASE_BODY="📦 **Build Result**\n\n**Name:** $REPO_NAME\n**Version:** $TAG\n**Build time:** $BUILD_TIME"
+
+          echo "Creating release for $TAG..."
+          
+          # 1. Create the Release with the custom message
+          RELEASE_JSON=$(curl -s -X POST "$API_URL" \
+            -H "$AUTH" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"tag_name\": \"$TAG\",
+              \"name\": \"Release $TAG\",
+              \"body\": \"$RELEASE_BODY\",
+              \"draft\": false,
+              \"prerelease\": false
+            }")
+          
+          RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
+          
+          # Fallback if release already exists
           if [ "$RELEASE_ID" == "null" ] || [ -z "$RELEASE_ID" ]; then
-             RELEASE_ID=$(curl -s -X POST "$API_URL" -H "$AUTH" -H "Content-Type: application/json" \
-             -d "{\"tag_name\":\"$TAG\",\"name\":\"Release $TAG\"}" | jq -r '.id')
+            echo "Release exists, updating body and fetching ID..."
+            RELEASE_ID=$(curl -s -H "$AUTH" "$API_URL/tags/$TAG" | jq -r '.id')
+            # Optional: Update existing release body
+            curl -s -X PATCH "$API_URL/$RELEASE_ID" \
+              -H "$AUTH" -H "Content-Type: application/json" \
+              -d "{\"body\": \"$RELEASE_BODY\"}"
           fi
 
+          # 2. Upload Artifacts (Factorio 1.3GB stable version)
           for file in dist/*; do
             [ -e "$file" ] || continue
-            echo "Uploading $(basename "$file") ($(du -h "$file" | cut -f1))..."
-            
-            # Using -T for direct streaming and -v for debugging large uploads
-            curl -v -X POST "$API_URL/$RELEASE_ID/assets?name=$(basename "$file")" \
+            echo "Uploading $(basename "$file")..."
+            curl -X POST "$API_URL/$RELEASE_ID/assets?name=$(basename "$file")" \
               -H "$AUTH" \
               -H "Content-Type: application/octet-stream" \
               -H "Expect: " \
-              --retry 5 \
-              --retry-delay 15 \
-              --connect-timeout 60 \
-              --no-buffer \
+              --retry 5 --retry-delay 15 --no-buffer \
               -T "$file"
           done
