@@ -209,11 +209,17 @@ jobs:
                 echo "✅ Package signing enabled"
               fi
               
+              
               echo "🔨 Building package..."
+              # First build the package
+              su - builder -c "cd /workspace && export GNUPGHOME=/home/builder/.gnupg && export GPG_TTY=\$(tty) && makepkg -sf --noconfirm"
+              
+              # Then sign packages if GPG is configured
               if [ "$HAS_GPG_KEY" = "true" ] && [ -f "/workspace/.gpg-passphrase" ]; then
-                su - builder -c "cd /workspace && export GNUPGHOME=/home/builder/.gnupg && export GPG_TTY=\$(tty) && makepkg -sf --noconfirm && for pkg in *.pkg.tar.zst; do echo \"Signing \$pkg...\"; cat .gpg-passphrase | gpg --batch --yes --passphrase-fd 0 --pinentry-mode loopback --detach-sign -u $GPG_KEY_ID \"\$pkg\" 2>&1 | grep -v 'gpg: WARNING'; done && rm -f .gpg-passphrase"
-              else
-                su - builder -c "cd /workspace && export GNUPGHOME=/home/builder/.gnupg && export GPG_TTY=\$(tty) && makepkg -sf --noconfirm"
+                echo "🔏 Signing packages..."
+                su - builder -c "cd /workspace && for pkg in *.pkg.tar.zst; do echo \"  Signing \$pkg...\"; cat .gpg-passphrase | gpg --batch --yes --passphrase-fd 0 --pinentry-mode loopback --detach-sign -u $GPG_KEY_ID \"\$pkg\"; done"
+                rm -f /workspace/.gpg-passphrase
+                echo "✅ Packages signed"
               fi
               
               echo "✅ Build complete"
