@@ -195,9 +195,8 @@ jobs:
                 KEY_FINGERPRINT=$(su - builder -c "gpg --list-keys --with-colons $GPG_KEY_ID | grep fpr | head -1 | cut -d: -f10")
                 su - builder -c "echo \"$KEY_FINGERPRINT:6:\" | gpg --import-ownertrust"
                 
-                # Configure makepkg for signing with passphrase file
-                su - builder -c "echo \"BUILDENV=(!distcc color !ccache check sign)\" >> ~/.makepkg.conf"
-                su - builder -c "echo \"GPGKEY=\\\"$GPG_KEY_ID\\\"\" >> ~/.makepkg.conf"
+                # Configure makepkg (don't sign during build, we'll sign after)
+                su - builder -c "echo \"BUILDENV=(!distcc color !ccache check !sign)\" >> ~/.makepkg.conf"
                 
                 # Store passphrase for signing in workspace
                 if [ -n "$GPG_PASSPHRASE" ]; then
@@ -217,9 +216,23 @@ jobs:
               # Then sign packages if GPG is configured
               if [ "$HAS_GPG_KEY" = "true" ] && [ -f "/workspace/.gpg-passphrase" ]; then
                 echo "🔏 Signing packages..."
-                su - builder -c "cd /workspace && for pkg in *.pkg.tar.zst; do echo \"  Signing \$pkg...\"; cat .gpg-passphrase | gpg --batch --yes --passphrase-fd 0 --pinentry-mode loopback --detach-sign -u $GPG_KEY_ID \"\$pkg\"; done"
+                su - builder -c "
+                  cd /workspace
+                  export GNUPGHOME=/home/builder/.gnupg
+                  for pkg in *.pkg.tar.zst; do 
+                    if [[ \"\$pkg\" != *-debug-* ]]; then
+                      echo \"  📝 Signing \$pkg...\"
+                      cat .gpg-passphrase | gpg --batch --yes --passphrase-fd 0 --pinentry-mode loopback --detach-sign -u $GPG_KEY_ID \"\$pkg\" 2>&1 || echo \"    ⚠️  Failed to sign \$pkg\"
+                      if [ -f \"\$pkg.sig\" ]; then
+                        echo \"    ✅ Signature created: \$pkg.sig\"
+                      fi
+                    else
+                      echo \"  ⏭️  Skipping debug package: \$pkg\"
+                    fi
+                  done
+                "
                 rm -f /workspace/.gpg-passphrase
-                echo "✅ Packages signed"
+                echo "✅ Signing complete"
               fi
               
               echo "✅ Build complete"
