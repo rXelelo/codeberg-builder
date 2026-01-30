@@ -90,7 +90,7 @@ jobs:
           # Specifically remove debug symbols from the dist folder
           rm -f ../dist/*-debug-*
 
-      - name: Create Release & Upload to Codeberg
+      - name: Create release & Upload to Codeberg
         if: steps.parse.outputs.is_tag == 'true'
         run: |
           REPO="${{ steps.parse.outputs.repo }}"
@@ -98,26 +98,40 @@ jobs:
           API_URL="https://codeberg.org/api/v1/repos/$REPO/releases"
           AUTH="Authorization: token ${{ secrets.CODEBERG_TOKEN }}"
 
-          # 1. Create the Release
+          # 1. Create or Find the Release
+          echo "Creating release for $TAG..."
           RELEASE_JSON=$(curl -s -X POST "$API_URL" \
             -H "$AUTH" -H "Content-Type: application/json" \
             -d "{\"tag_name\":\"$TAG\",\"name\":\"Release $TAG\",\"body\":\"Automated Build\"}")
           
           RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
           
-          # If 409 (already exists), fetch existing ID
-          if [ "$RELEASE_ID" == "null" ]; then
+          if [ "$RELEASE_ID" == "null" ] || [ -z "$RELEASE_ID" ]; then
+            echo "Release might already exist, fetching ID..."
             RELEASE_ID=$(curl -s -H "$AUTH" "$API_URL/tags/$TAG" | jq -r '.id')
           fi
+          
+          echo "Using Release ID: $RELEASE_ID"
 
-          # 2. Upload Artifacts
+          # 2. Upload Artifacts with Retries and Large File Support
           for file in dist/*; do
             [ -e "$file" ] || continue
-            echo "Uploading $(basename $file)..."
-            curl -X POST "$API_URL/$RELEASE_ID/assets?name=$(basename $file)" \
-              -H "$AUTH" -F "attachment=@$file"
+            FILENAME=$(basename "$file")
+            echo "Uploading $FILENAME..."
+            
+            # Using --retry 3 to handle temporary connection resets
+            # Using -T (transfer) can sometimes be more stable for huge files than -F
+            curl -X POST "$API_URL/$RELEASE_ID/assets?name=$FILENAME" \
+              -H "$AUTH" \
+              -H "Content-Type: application/octet-stream" \
+              --retry 5 \
+              --retry-delay 10 \
+              --max-time 3600 \
+              --buffer-size 1M \
+              -T "$file"
+              
+            echo "Successfully uploaded $FILENAME"
           done
-
       - name: Generate GitHub Summary
         if: always()
         run: |
