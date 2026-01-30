@@ -216,21 +216,7 @@ jobs:
               # Then sign packages if GPG is configured
               if [ "$HAS_GPG_KEY" = "true" ] && [ -f "/workspace/.gpg-passphrase" ]; then
                 echo "🔏 Signing packages..."
-                su - builder -c "
-                  cd /workspace
-                  export GNUPGHOME=/home/builder/.gnupg
-                  for pkg in *.pkg.tar.zst; do 
-                    if [[ \"\$pkg\" != *-debug-* ]]; then
-                      echo \"  📝 Signing \$pkg...\"
-                      cat .gpg-passphrase | gpg --batch --yes --passphrase-fd 0 --pinentry-mode loopback --detach-sign -u $GPG_KEY_ID \"\$pkg\" 2>&1 || echo \"    ⚠️  Failed to sign \$pkg\"
-                      if [ -f \"\$pkg.sig\" ]; then
-                        echo \"    ✅ Signature created: \$pkg.sig\"
-                      fi
-                    else
-                      echo \"  ⏭️  Skipping debug package: \$pkg\"
-                    fi
-                  done
-                "
+                su - builder -c "cd /workspace && export GNUPGHOME=/home/builder/.gnupg && for pkg in *.pkg.tar.zst; do if [[ \$pkg != *-debug-* ]]; then echo \"  📝 Signing \$pkg...\"; cat .gpg-passphrase | gpg --batch --yes --passphrase-fd 0 --pinentry-mode loopback --detach-sign -u $GPG_KEY_ID \"\$pkg\" 2>&1 || echo \"    ⚠️  Failed to sign \$pkg\"; if [ -f \"\$pkg.sig\" ]; then echo \"    ✅ Signature created: \$pkg.sig\"; fi; else echo \"  ⏭️  Skipping debug package: \$pkg\"; fi; done"
                 rm -f /workspace/.gpg-passphrase
                 echo "✅ Signing complete"
               fi
