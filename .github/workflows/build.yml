@@ -31,7 +31,6 @@ jobs:
             REF="${{ github.event.inputs.git_ref }}"
           fi
           
-          # Check for tag
           if [[ "$REF" == refs/tags/* ]]; then
             TAG="${REF#refs/tags/}"
             echo "is_tag=true" >> $GITHUB_OUTPUT
@@ -41,20 +40,18 @@ jobs:
           fi
           
           echo "repo=$REPO" >> $GITHUB_OUTPUT
-          echo "repo_name=${REPO##*/}" >> $GITHUB_OUTPUT
 
       - name: Clone Codeberg Source
         if: steps.parse.outputs.is_tag == 'true'
         run: |
-          # Use Token for Auth to handle private repos
           git clone --depth 1 --branch ${{ steps.parse.outputs.tag }} \
             "https://oauth2:${{ secrets.CODEBERG_TOKEN }}@codeberg.org/${{ steps.parse.outputs.repo }}.git" source
 
-      - name: Build & Sign PKGBUILD (Inside Arch Container)
+      - name: Build & Sign PKGBUILD
         if: steps.parse.outputs.is_tag == 'true'
         run: |
           cd source
-          if [ ! -f "PKGBUILD" ]; then echo "No PKGBUILD, skipping Arch build"; exit 0; fi
+          if [ ! -f "PKGBUILD" ]; then exit 0; fi
 
           docker run --rm \
             -v $(pwd):/workspace \
@@ -67,7 +64,7 @@ jobs:
               useradd -m builder && echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
               chown -R builder:builder /workspace
               
-              # Force GPG to allow loopback passphrase entry
+              # Enable loopback for GPG
               su builder -c "mkdir -p ~/.gnupg && echo \"allow-loopback-pinentry\" > ~/.gnupg/gpg-agent.conf"
               su builder -c "echo \"pinentry-mode loopback\" > ~/.gnupg/gpg.conf"
               
@@ -77,17 +74,17 @@ jobs:
               # Build
               su builder -c "makepkg -sf --noconfirm"
               
-              # Sign without TTY (The Fix)
+              # Sign (creating .sig files)
               for pkg in *.pkg.tar.zst; do
                 [[ "$pkg" == *"-debug-"* ]] && continue
                 echo "Signing $pkg..."
-                echo "$GPG_PASSPHRASE" | su builder -c "gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --detach-sign --armor $pkg"
+                echo "$GPG_PASSPHRASE" | su builder -c "gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --detach-sign $pkg"
               done
             '
           
+          # Move packages and .sig files (skipping debug)
           mkdir -p ../dist
-          cp *.pkg.tar.zst *.pkg.tar.zst.asc ../dist/ 2>/dev/null || true
-          rm -f ../dist/*-debug-*
+          find . -maxdepth 1 -name "*.pkg.tar.zst*" ! -name "*-debug-*" -exec cp {} ../dist/ \;
 
       - name: Create release & Upload to Codeberg
         if: steps.parse.outputs.is_tag == 'true'
@@ -97,46 +94,22 @@ jobs:
           API_URL="https://codeberg.org/api/v1/repos/$REPO/releases"
           AUTH="Authorization: token ${{ secrets.CODEBERG_TOKEN }}"
 
-          # 1. Create or Find the Release
-          echo "Creating/Finding release for $TAG..."
-          RELEASE_JSON=$(curl -s -X POST "$API_URL" \
-            -H "$AUTH" -H "Content-Type: application/json" \
-            -d "{\"tag_name\":\"$TAG\",\"name\":\"Release $TAG\",\"body\":\"Automated Build\"}")
-          
-          RELEASE_ID=$(echo "$RELEASE_JSON" | jq -r '.id')
-          
+          # Get Release ID
+          RELEASE_ID=$(curl -s -H "$AUTH" "$API_URL/tags/$TAG" | jq -r '.id')
           if [ "$RELEASE_ID" == "null" ] || [ -z "$RELEASE_ID" ]; then
-            echo "Release exists, fetching ID..."
-            RELEASE_ID=$(curl -s -H "$AUTH" "$API_URL/tags/$TAG" | jq -r '.id')
+             RELEASE_ID=$(curl -s -X POST "$API_URL" -H "$AUTH" -H "Content-Type: application/json" \
+             -d "{\"tag_name\":\"$TAG\",\"name\":\"Release $TAG\"}" | jq -r '.id')
           fi
-          
-          echo "Using Release ID: $RELEASE_ID"
 
-          # 2. Upload Artifacts
           for file in dist/*; do
             [ -e "$file" ] || continue
-            FILENAME=$(basename "$file")
-            echo "Uploading $FILENAME (Size: $(du -h "$file" | cut -f1))..."
+            echo "Uploading $(basename "$file")..."
             
-            # Using -T (upload) with --retry and --keepalive for stability
-            # Removed --buffer-size to fix the Exit Code 2 error
-            curl -v -X POST "$API_URL/$RELEASE_ID/assets?name=$FILENAME" \
+            # Robust upload for large files
+            curl -X POST "$API_URL/$RELEASE_ID/assets?name=$(basename "$file")" \
               -H "$AUTH" \
               -H "Content-Type: application/octet-stream" \
               -H "Expect: " \
-              --retry 5 \
-              --retry-delay 10 \
-              --connect-timeout 60 \
-              --no-buffer \
-              --keepalive-time 60 \
+              --retry 5 --retry-delay 15 --no-buffer \
               -T "$file"
-              
-            echo "✅ Successfully uploaded $FILENAME"
           done
-      - name: Generate GitHub Summary
-        if: always()
-        run: |
-          echo "### 📦 Codeberg Build Result" >> $GITHUB_STEP_SUMMARY
-          echo "Repo: ${{ steps.parse.outputs.repo }}" >> $GITHUB_STEP_SUMMARY
-          echo "Tag: ${{ steps.parse.outputs.tag }}" >> $GITHUB_STEP_SUMMARY
-          echo "Status: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
