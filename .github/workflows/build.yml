@@ -103,13 +103,16 @@ jobs:
 
           for file in dist/*; do
             [ -e "$file" ] || continue
-            echo "Uploading $(basename "$file")..."
+            echo "Uploading $(basename "$file") ($(du -h "$file" | cut -f1))..."
             
-            # Robust upload for large files
-            curl -X POST "$API_URL/$RELEASE_ID/assets?name=$(basename "$file")" \
+            # Using -T for direct streaming and -v for debugging large uploads
+            curl -v -X POST "$API_URL/$RELEASE_ID/assets?name=$(basename "$file")" \
               -H "$AUTH" \
               -H "Content-Type: application/octet-stream" \
               -H "Expect: " \
-              --retry 5 --retry-delay 15 --no-buffer \
+              --retry 5 \
+              --retry-delay 15 \
+              --connect-timeout 60 \
+              --no-buffer \
               -T "$file"
           done
