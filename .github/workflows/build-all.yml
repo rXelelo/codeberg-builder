@@ -1,0 +1,287 @@
+name: Build All Packages
+
+on:
+  repository_dispatch:
+    types: [build-arch, build-fedora, build-void]
+  push:
+    paths:
+      - 'arch/**'
+      - 'fedora/**'
+      - 'void/**'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Clone repo repository to check existing packages
+        run: |
+          git clone https://codeberg.org/UniversalRepository/repo.git /tmp/repo
+      
+      - name: Build Arch packages
+        run: |
+          cd arch
+          for pkgdir in */; do
+            if [ -f "$pkgdir/PKGBUILD" ]; then
+              pkgname=$(basename "$pkgdir")
+              echo "Building Arch package: $pkgname"
+              docker run --rm \
+                -v "$PWD/$pkgdir:/pkg" \
+                -e GPG_PRIVATE_KEY="${{ secrets.GPG_PRIVATE_KEY }}" \
+                -e GPG_PASSPHRASE="${{ secrets.GPG_PASSPHRASE }}" \
+                archlinux:base-devel \
+                bash -c '
+                  pacman -Syu --noconfirm gnupg sudo
+                  useradd -m builder && echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
+                  chown -R builder:builder /pkg
+                  
+                  # Enable loopback for GPG
+                  su builder -c "mkdir -p ~/.gnupg && echo \"allow-loopback-pinentry\" > ~/.gnupg/gpg-agent.conf"
+                  su builder -c "echo \"pinentry-mode loopback\" > ~/.gnupg/gpg.conf"
+                  
+                  # Import Key if provided
+                  if [ -n "$GPG_PRIVATE_KEY" ]; then
+                    echo "$GPG_PRIVATE_KEY" | su builder -c "gpg --batch --import"
+                  fi
+                  
+                  # Build
+                  cd /pkg
+                  su builder -c "makepkg -sf --noconfirm"
+                  
+                  # Sign packages if GPG key is available
+                  if [ -n "$GPG_PRIVATE_KEY" ]; then
+                    for pkg in *.pkg.tar.zst; do
+                      [[ "$pkg" == *"-debug-"* ]] && continue
+                      [ -f "$pkg" ] || continue
+                      echo "Signing $pkg..."
+                      echo "$GPG_PASSPHRASE" | su builder -c "gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --detach-sign $pkg"
+                    done
+                  fi
+                '
+            fi
+          done
+      
+      - name: Build Fedora packages
+        run: |
+          cd fedora
+          for spec in *.spec; do
+            if [ -f "$spec" ]; then
+              echo "Building Fedora package from: $spec"
+              docker run --rm \
+                -v "$PWD:/pkg" \
+                -e GPG_PRIVATE_KEY="${{ secrets.GPG_PRIVATE_KEY }}" \
+                -e GPG_PASSPHRASE="${{ secrets.GPG_PASSPHRASE }}" \
+                fedora:latest \
+                bash -c '
+                  cd /pkg
+                  dnf install -y rpm-build rpmdevtools dnf-plugins-core rpm-sign gnupg2 pinentry
+                  rpmdev-setuptree
+                  
+                  # Setup GPG if key is provided
+                  if [ -n "$GPG_PRIVATE_KEY" ]; then
+                    echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+                    GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | awk "{print \$2}" | cut -d"/" -f2 | head -1)
+                    
+                    # Configure RPM to use GPG
+                    echo "%_signature gpg" >> ~/.rpmmacros
+                    echo "%_gpg_name $GPG_KEY_ID" >> ~/.rpmmacros
+                  fi
+                  
+                  # Copy spec file
+                  cp *.spec ~/rpmbuild/SPECS/
+                  
+                  # Copy sources if they exist
+                  [ -d sources ] && cp sources/* ~/rpmbuild/SOURCES/ || true
+                  
+                  # Install build dependencies
+                  cd ~/rpmbuild/SPECS
+                  dnf builddep -y *.spec
+                  
+                  # Build packages
+                  rpmbuild -ba *.spec
+                  
+                  # Sign packages if GPG key is available
+                  if [ -n "$GPG_PRIVATE_KEY" ]; then
+                    for pkg in ~/rpmbuild/RPMS/*/*.rpm ~/rpmbuild/SRPMS/*.rpm; do
+                      [ -f "$pkg" ] || continue
+                      echo "Signing $pkg..."
+                      echo "$GPG_PASSPHRASE" | rpmsign --addsign --key-id="$GPG_KEY_ID" "$pkg"
+                    done
+                  fi
+                  
+                  # Copy built packages back
+                  cp ~/rpmbuild/RPMS/*/*.rpm /pkg/ 2>/dev/null || true
+                  cp ~/rpmbuild/SRPMS/*.rpm /pkg/ 2>/dev/null || true
+                '
+            fi
+          done
+      
+      - name: Build Void packages
+        run: |
+          cd void
+          for pkgdir in */; do
+            if [ -f "$pkgdir/template" ]; then
+              pkgname=$(basename "$pkgdir")
+              echo "Building Void package: $pkgname"
+              docker run --rm \
+                -v "$PWD/$pkgdir:/template" \
+                -v "$PWD:/output" \
+                -e GPG_PRIVATE_KEY="${{ secrets.GPG_PRIVATE_KEY }}" \
+                -e GPG_PASSPHRASE="${{ secrets.GPG_PASSPHRASE }}" \
+                ghcr.io/void-linux/void-buildroot-musl:latest \
+                bash -c '
+                  # Install xbps-src if not available
+                  if ! command -v xbps-src &> /dev/null; then
+                    xbps-install -Syu xbps
+                    xbps-install -y base-devel gnupg2
+                  fi
+                  
+                  # Setup GPG if key is provided
+                  if [ -n "$GPG_PRIVATE_KEY" ]; then
+                    xbps-install -y gnupg2
+                    echo "$GPG_PRIVATE_KEY" | gpg --batch --import
+                    GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | awk "{print \$2}" | cut -d"/" -f2 | head -1)
+                  fi
+                  
+                  # Setup void-packages if needed
+                  if [ ! -d /void-packages ]; then
+                    git clone --depth=1 https://github.com/void-linux/void-packages.git /void-packages
+                    cd /void-packages
+                    ./xbps-src binary-bootstrap
+                  else
+                    cd /void-packages
+                  fi
+                  
+                  # Copy template to srcpkgs
+                  PKGNAME=$(basename /template)
+                  mkdir -p srcpkgs/$PKGNAME
+                  cp /template/template srcpkgs/$PKGNAME/
+                  
+                  # Build package
+                  ./xbps-src pkg $PKGNAME
+                  
+                  # Sign packages if GPG key is available
+                  if [ -n "$GPG_PRIVATE_KEY" ]; then
+                    for pkg in hostdir/binpkgs/${PKGNAME}-*.xbps; do
+                      [ -f "$pkg" ] || continue
+                      echo "Signing $pkg..."
+                      echo "$GPG_PASSPHRASE" | xbps-rindex --sign --signedby "$GPG_KEY_ID" "$pkg"
+                    done
+                  fi
+                  
+                  # Copy built packages to output
+                  find hostdir/binpkgs -name "${PKGNAME}-*.xbps" -exec cp {} /output/ \;
+                  # Copy signature files if they exist
+                  find hostdir/binpkgs -name "${PKGNAME}-*.xbps.sig*" -exec cp {} /output/ \; 2>/dev/null || true
+                '
+            fi
+          done
+      
+      - name: Check and copy Arch packages to repo
+        run: |
+          cd arch
+          for pkg in */*.pkg.tar.zst; do
+            if [ -f "$pkg" ]; then
+              pkgname=$(basename "$pkg")
+              
+              # Check if package exists in repo
+              if [ -f "/tmp/repo/arch/$pkgname" ]; then
+                echo "Package $pkgname already exists with same version, skipping"
+              else
+                echo "New version of $pkgname, copying to repo"
+                mkdir -p /tmp/repo/arch
+                cp "$pkg" /tmp/repo/arch/
+                # Copy signature if exists
+                [ -f "$pkg.sig" ] && cp "$pkg.sig" /tmp/repo/arch/
+              fi
+            fi
+          done
+      
+      - name: Check and copy Fedora packages to repo
+        run: |
+          cd fedora
+          for pkg in *.rpm; do
+            if [ -f "$pkg" ]; then
+              pkgname=$(basename "$pkg")
+              
+              # Check if package exists in repo
+              if [ -f "/tmp/repo/fedora/$pkgname" ]; then
+                echo "Package $pkgname already exists with same version, skipping"
+              else
+                echo "New version of $pkgname, copying to repo"
+                mkdir -p /tmp/repo/fedora
+                cp "$pkg" /tmp/repo/fedora/
+              fi
+            fi
+          done
+      
+      - name: Check and copy Void packages to repo
+        run: |
+          cd void
+          for pkg in *.xbps; do
+            if [ -f "$pkg" ]; then
+              pkgname=$(basename "$pkg")
+              
+              # Check if package exists in repo
+              if [ -f "/tmp/repo/void/$pkgname" ]; then
+                echo "Package $pkgname already exists with same version, skipping"
+              else
+                echo "New version of $pkgname, copying to repo"
+                mkdir -p /tmp/repo/void
+                cp "$pkg" /tmp/repo/void/
+                # Copy signature files if they exist
+                [ -f "$pkg.sig" ] && cp "$pkg.sig" /tmp/repo/void/
+                [ -f "$pkg.sig2" ] && cp "$pkg.sig2" /tmp/repo/void/
+              fi
+            fi
+          done
+      
+      - name: Create repository metadata for Arch
+        run: |
+          cd /tmp/repo/arch
+          if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
+            docker run --rm -v "$PWD:/repo" archlinux:base-devel bash -c "
+              pacman -Sy --noconfirm pacman-contrib
+              cd /repo
+              repo-add universal.db.tar.gz *.pkg.tar.zst
+            "
+          fi
+      
+      - name: Create repository metadata for Fedora
+        run: |
+          cd /tmp/repo/fedora
+          if ls *.rpm 1> /dev/null 2>&1; then
+            docker run --rm -v "$PWD:/repo" fedora:latest bash -c "
+              dnf install -y createrepo_c
+              cd /repo
+              createrepo_c .
+            "
+          fi
+      
+      - name: Create repository metadata for Void
+        run: |
+          cd /tmp/repo/void
+          if ls *.xbps 1> /dev/null 2>&1; then
+            docker run --rm -v "$PWD:/repo" ghcr.io/void-linux/void-buildroot-musl:latest bash -c "
+              xbps-install -Syu xbps
+              cd /repo
+              xbps-rindex -a *.xbps
+            "
+          fi
+      
+      - name: Push all changes to repo
+        run: |
+          cd /tmp/repo
+          git config user.name "GitHub Actions"
+          git config user.email "actions@github.com"
+          git add arch/ fedora/ void/
+          if git diff --staged --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "Update packages [CI] - $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
+            git push https://oauth2:${{ secrets.CODEBERG_TOKEN }}@codeberg.org/UniversalRepository/repo.git main
+          fi
