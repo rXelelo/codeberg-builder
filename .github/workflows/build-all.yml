@@ -66,6 +66,10 @@ jobs:
                     done
                   fi
                 '
+              
+              # List built packages for debugging
+              echo "Built packages in $pkgdir:"
+              ls -lh "$pkgdir"/*.pkg.tar.zst 2>/dev/null || echo "No packages found"
             fi
           done
       
@@ -74,6 +78,7 @@ jobs:
           cd /tmp/packages/fedora
           for spec in *.spec; do
             if [ -f "$spec" ]; then
+              specname=$(basename "$spec" .spec)
               echo "Building Fedora package from: $spec"
               docker run --rm \
                 -v "$PWD:/pkg" \
@@ -117,10 +122,14 @@ jobs:
                     done
                   fi
                   
-                  # Copy built packages back
+                  # Copy built packages back to /pkg
                   cp ~/rpmbuild/RPMS/*/*.rpm /pkg/ 2>/dev/null || true
                   cp ~/rpmbuild/SRPMS/*.rpm /pkg/ 2>/dev/null || true
                 '
+              
+              # List built packages for debugging
+              echo "Built packages:"
+              ls -lh *.rpm 2>/dev/null || echo "No packages found"
             fi
           done
       
@@ -182,32 +191,42 @@ jobs:
                   # Copy signature files if they exist
                   find hostdir/binpkgs -name "${PKGNAME}-*.xbps.sig*" -exec cp {} /output/ \; 2>/dev/null || true
                 '
+              
+              # List built packages for debugging
+              echo "Built packages:"
+              ls -lh *.xbps 2>/dev/null || echo "No packages found"
             fi
           done
       
       - name: Check and copy Arch packages to repo
         run: |
           cd /tmp/packages/arch
-          for pkg in */*.pkg.tar.zst; do
-            if [ -f "$pkg" ]; then
-              pkgname=$(basename "$pkg")
-              
-              # Check if package exists in repo
-              if [ -f "/tmp/repo/arch/$pkgname" ]; then
-                echo "Package $pkgname already exists with same version, skipping"
-              else
-                echo "New version of $pkgname, copying to repo"
-                mkdir -p /tmp/repo/arch
-                cp "$pkg" /tmp/repo/arch/
-                # Copy signature if exists
-                [ -f "$pkg.sig" ] && cp "$pkg.sig" /tmp/repo/arch/
+          COPIED=0
+          for pkgdir in */; do
+            for pkg in "$pkgdir"*.pkg.tar.zst; do
+              if [ -f "$pkg" ]; then
+                pkgname=$(basename "$pkg")
+                
+                # Check if package exists in repo
+                if [ -f "/tmp/repo/arch/$pkgname" ]; then
+                  echo "Package $pkgname already exists with same version, skipping"
+                else
+                  echo "New version of $pkgname, copying to repo"
+                  mkdir -p /tmp/repo/arch
+                  cp "$pkg" /tmp/repo/arch/
+                  # Copy signature if exists
+                  [ -f "$pkg.sig" ] && cp "$pkg.sig" /tmp/repo/arch/
+                  COPIED=$((COPIED + 1))
+                fi
               fi
-            fi
+            done
           done
+          echo "Copied $COPIED Arch packages"
       
       - name: Check and copy Fedora packages to repo
         run: |
           cd /tmp/packages/fedora
+          COPIED=0
           for pkg in *.rpm; do
             if [ -f "$pkg" ]; then
               pkgname=$(basename "$pkg")
@@ -219,13 +238,16 @@ jobs:
                 echo "New version of $pkgname, copying to repo"
                 mkdir -p /tmp/repo/fedora
                 cp "$pkg" /tmp/repo/fedora/
+                COPIED=$((COPIED + 1))
               fi
             fi
           done
+          echo "Copied $COPIED Fedora packages"
       
       - name: Check and copy Void packages to repo
         run: |
           cd /tmp/packages/void
+          COPIED=0
           for pkg in *.xbps; do
             if [ -f "$pkg" ]; then
               pkgname=$(basename "$pkg")
@@ -240,41 +262,52 @@ jobs:
                 # Copy signature files if they exist
                 [ -f "$pkg.sig" ] && cp "$pkg.sig" /tmp/repo/void/
                 [ -f "$pkg.sig2" ] && cp "$pkg.sig2" /tmp/repo/void/
+                COPIED=$((COPIED + 1))
               fi
             fi
           done
+          echo "Copied $COPIED Void packages"
       
       - name: Create repository metadata for Arch
         run: |
           cd /tmp/repo/arch
           if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
+            echo "Creating Arch repository metadata..."
             docker run --rm -v "$PWD:/repo" archlinux:base-devel bash -c "
               pacman -Sy --noconfirm pacman-contrib
               cd /repo
               repo-add universal.db.tar.gz *.pkg.tar.zst
             "
+          else
+            echo "No Arch packages to index"
           fi
       
       - name: Create repository metadata for Fedora
         run: |
           cd /tmp/repo/fedora
           if ls *.rpm 1> /dev/null 2>&1; then
+            echo "Creating Fedora repository metadata..."
             docker run --rm -v "$PWD:/repo" fedora:latest bash -c "
               dnf install -y createrepo_c
               cd /repo
               createrepo_c .
             "
+          else
+            echo "No Fedora packages to index"
           fi
       
       - name: Create repository metadata for Void
         run: |
           cd /tmp/repo/void
           if ls *.xbps 1> /dev/null 2>&1; then
+            echo "Creating Void repository metadata..."
             docker run --rm -v "$PWD:/repo" ghcr.io/void-linux/void-buildroot-musl:latest bash -c "
               xbps-install -Syu xbps
               cd /repo
               xbps-rindex -a *.xbps
             "
+          else
+            echo "No Void packages to index"
           fi
       
       - name: Push all changes to repo
