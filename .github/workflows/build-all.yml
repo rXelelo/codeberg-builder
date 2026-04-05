@@ -191,10 +191,13 @@ jobs:
       volumes:
         - /dev:/dev
     steps:
-      - name: Install dependencies
+      - name: Prepare container
         run: |
+          mkdir -p /etc/xbps.d && cp /usr/share/xbps.d/*-repository-*.conf /etc/xbps.d/
+          sed -i 's|repo-default|repo-ci|g' /etc/xbps.d/*-repository-*.conf
           xbps-install -Syu xbps
-          xbps-install -y git base-devel gnupg2 sudo bash curl git libstdc++
+          xbps-install -y sudo bash curl git libstdc++
+          useradd -G xbuilder -M builder
       
       - name: Checkout
         uses: actions/checkout@v4
@@ -208,33 +211,34 @@ jobs:
       
       - name: Build Void packages
         run: |
-          cd /tmp/packages/void
-          useradd -m builder && usermod -aG xbuilder builder
-          
-          # Setup void-packages
+          VOID_DIR=/tmp/packages/void
           git clone --depth=1 https://github.com/void-linux/void-packages.git /void-packages
           cd /void-packages
-          chown -R builder:builder /void-packages
           echo XBPS_BUILD_ENVIRONMENT=void-packages-ci >> etc/conf
           echo XBPS_CHROOT_CMD=uchroot >> etc/conf
           echo XBPS_ALLOW_RESTRICTED=yes >> etc/conf
+          cp -r "$VOID_DIR"/* srcpkgs/
+          chown -R builder:builder /void-packages
           sudo -Eu builder ./xbps-src binary-bootstrap
           
-          cd /tmp/packages/void
-          for pkgdir in */; do
+          for pkgdir in "$VOID_DIR"/*; do
+            [ -d "$pkgdir" ] || continue
             pkgname=$(basename "$pkgdir")
-            if [[ "$pkgname" == _* ]]; then
+            case "$pkgname" in
+              _*)
               echo "Skipping $pkgdir (starts with underscore)"
               continue
-            fi
+              ;;
+            esac
             [ -f "$pkgdir/template" ] || continue
             
-            # Extract version and revision from template
-            source "$pkgdir/template"
-            pkgver_full="${pkgname}-${version}-${revision}"
+            # Extract version and revision from template without sourcing
+            version=$(grep '^version=' "$pkgdir/template" | head -1 | cut -d'=' -f2)
+            revision=$(grep '^revision=' "$pkgdir/template" | head -1 | cut -d'=' -f2)
+            pkgver_full="${pkgname}-${version}_${revision}"
             
-            # Check if package already exists in repo
-            if ls /tmp/repo/void/${pkgname}-*-*.xbps 1>/dev/null 2>&1; then
+            # Check if exact version already exists in repo
+            if ls /tmp/repo/void/${pkgname}-${version}_${revision}*.xbps 1>/dev/null 2>&1; then
               echo "Package $pkgver_full already exists in repo, skipping"
               continue
             fi
