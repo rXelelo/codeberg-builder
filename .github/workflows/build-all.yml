@@ -95,6 +95,9 @@ jobs:
           cd /tmp/packages/fedora
           useradd -m builder && echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           
+          # Setup rpmbuild directory structure
+          rpmdev-setuptree
+          
           for spec in *.spec; do
             if [[ "$(basename "$spec")" == _* ]]; then
               echo "Skipping $spec (starts with underscore)"
@@ -178,12 +181,16 @@ jobs:
           # Setup void-packages
           git clone --depth=1 https://github.com/void-linux/void-packages.git /void-packages
           cd /void-packages
-          ./xbps-src binary-bootstrap
+          chown -R builder:builder /void-packages
+          sudo -Eu builder ./xbps-src binary-bootstrap
           
           cd /tmp/packages/void
           for pkgdir in */; do
             pkgname=$(basename "$pkgdir")
-            [[ "$pkgname" == _* ]] && continue
+            if [[ "$pkgname" == _* ]]; then
+              echo "Skipping $pkgdir (starts with underscore)"
+              continue
+            fi
             if [ -f "$pkgdir/template" ]; then
               echo "Building Void package: $pkgname"
               
@@ -193,15 +200,14 @@ jobs:
               chown -R builder:builder /void-packages/srcpkgs/$pkgname
               
               # Build package
-              cd /void-packages
-              sudo -Eu builder ./xbps-src pkg $pkgname
+              sudo -Eu builder sh -c "cd /void-packages && ./xbps-src pkg $pkgname"
               
               # Sign packages if GPG key is available
               if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
                 echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
                 GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | awk "{print \$2}" | cut -d"/" -f2 | head -1)
                 
-                for pkg in hostdir/binpkgs/${pkgname}-*.xbps; do
+                for pkg in /void-packages/hostdir/binpkgs/${pkgname}-*.xbps; do
                   [ -f "$pkg" ] || continue
                   echo "Signing $pkg..."
                   echo "${{ secrets.GPG_PASSPHRASE }}" | xbps-rindex --sign --signedby "$GPG_KEY_ID" "$pkg"
