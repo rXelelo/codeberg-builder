@@ -132,15 +132,15 @@ jobs:
               
               # Build packages
               rpmbuild -ba "$spec"
-              
-              # Sign packages if GPG key is available
-              if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
-                for pkg in ~/rpmbuild/RPMS/*/*.rpm ~/rpmbuild/SRPMS/*.rpm; do
-                  [ -f "$pkg" ] || continue
-                  echo "Signing $pkg..."
-                  echo "${{ secrets.GPG_PASSPHRASE }}" | rpmsign --addsign --key-id="$GPG_KEY_ID" "$pkg"
-                done
-              fi
+               
+               # Sign packages if GPG key is available
+               if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
+                 for pkg in ~/rpmbuild/RPMS/*/*.rpm ~/rpmbuild/SRPMS/*.rpm; do
+                   [ -f "$pkg" ] || continue
+                   echo "Signing $pkg..."
+                   echo "${{ secrets.GPG_PASSPHRASE }}" | rpmsign --addsign --key-id="$GPG_KEY_ID" --batch "$pkg"
+                 done
+               fi
               
               # Copy built packages back
               cp ~/rpmbuild/RPMS/*/*.rpm /tmp/packages/fedora/ 2>/dev/null || true
