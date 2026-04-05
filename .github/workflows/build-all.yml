@@ -438,7 +438,7 @@ jobs:
           # Create Void repository
           if [ -d /tmp/repo/void ] && ls /tmp/repo/void/*.xbps 1>/dev/null 2>&1; then
             echo "Creating Void repository..."
-            docker run --rm -v /tmp/repo/void:/repo ghcr.io/void-linux/void-glibc-full:latest bash -c "
+            docker run --rm -v /tmp/repo/void:/repo ghcr.io/void-linux/void-glibc-full:latest sh -c "
               xbps-install -Syu xbps
               cd /repo
               XBPS_ARCH=x86_64 xbps-rindex -a *.xbps
