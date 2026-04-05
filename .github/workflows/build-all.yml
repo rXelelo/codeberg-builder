@@ -132,15 +132,14 @@ jobs:
               
               # Build packages
               rpmbuild -ba "$spec"
-               
-               # Sign packages if GPG key is available
-               if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
-                 for pkg in ~/rpmbuild/RPMS/*/*.rpm ~/rpmbuild/SRPMS/*.rpm; do
-                   [ -f "$pkg" ] || continue
-                   echo "Signing $pkg..."
-                   echo "${{ secrets.GPG_PASSPHRASE }}" | rpmsign --addsign --key-id="$GPG_KEY_ID" --batch "$pkg"
-                 done
-               fi
+                
+                # Sign packages if GPG key is available
+                if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
+                  for pkg in ~/rpmbuild/RPMS/*/*.rpm ~/rpmbuild/SRPMS/*.rpm; do
+                    [ -f "$pkg" ] || continue
+                    echo "Skipping GPG signing for $pkg (not supported in container)"
+                  done
+                fi
               
               # Copy built packages back
               cp ~/rpmbuild/RPMS/*/*.rpm /tmp/packages/fedora/ 2>/dev/null || true
@@ -173,10 +172,7 @@ jobs:
           xbps-install -y git base-devel gnupg2
       
       - name: Checkout repository
-        run: |
-          git clone https://github.com/${{ github.repository }}.git /workspace
-          cd /workspace
-          git checkout ${{ github.sha }}
+        uses: actions/checkout@v4
       
       - name: Clone Packages repository
         run: |
