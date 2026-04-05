@@ -123,8 +123,8 @@ jobs:
             pkgrel=$(grep "^Release:" "$spec" | awk '{print $2}' | cut -d'%' -f1)
             pkgver_full="${specname}-${pkgver}-${pkgrel}"
             
-            # Check if package already exists in repo
-            if ls /tmp/repo/fedora/${specname}-*-*.fc*.x86_64.rpm 1>/dev/null 2>&1; then
+            # Check if exact version-release already exists in repo
+            if ls /tmp/repo/fedora/${specname}-${pkgver}-${pkgrel}.fc*.x86_64.rpm 1>/dev/null 2>&1; then
               echo "Package $pkgver_full already exists in repo, skipping"
               continue
             fi
