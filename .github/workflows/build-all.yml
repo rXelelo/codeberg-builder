@@ -214,8 +214,7 @@ jobs:
           # Setup void-packages
           git clone --depth=1 https://github.com/void-linux/void-packages.git /void-packages
           cd /void-packages
-          chown -R builder:builder /void-packages
-          sudo -Eu builder ./xbps-src binary-bootstrap
+          ./xbps-src binary-bootstrap
           
           cd /tmp/packages/void
           for pkgdir in */; do
@@ -241,10 +240,10 @@ jobs:
             # Copy template to srcpkgs
             mkdir -p /void-packages/srcpkgs/$pkgname
             cp "$pkgdir/template" /void-packages/srcpkgs/$pkgname/
-            chown -R builder:builder /void-packages/srcpkgs/$pkgname
+            chown -R root:root /void-packages/srcpkgs/$pkgname
             
             # Build package
-            sudo -Eu builder sh -c "cd /void-packages && ./xbps-src pkg $pkgname"
+            sh -c "cd /void-packages && ./xbps-src -E pkg $pkgname"
             
             # Skip GPG signing (not supported in container)
             
