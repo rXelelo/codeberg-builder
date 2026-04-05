@@ -361,16 +361,23 @@ jobs:
       
       - name: Copy packages to repo
         run: |
+          set -euo pipefail
+          shopt -s nullglob
+
           mkdir -p /tmp/repo/arch /tmp/repo/fedora /tmp/repo/void
+
+          echo "Artifact directories present:"
+          ls -la /tmp/artifacts || true
           
           # Copy Arch packages
           if [ -d /tmp/artifacts/arch-packages ]; then
             for pkg in /tmp/artifacts/arch-packages/*.pkg.tar.zst; do
-              [ -f "$pkg" ] || continue
               pkgname=$(basename "$pkg")
               if [ ! -f "/tmp/repo/arch/$pkgname" ]; then
                 cp "$pkg" /tmp/repo/arch/
-                [ -f "$pkg.sig" ] && cp "$pkg.sig" /tmp/repo/arch/
+                if [ -f "$pkg.sig" ]; then
+                  cp "$pkg.sig" /tmp/repo/arch/
+                fi
               fi
             done
           fi
@@ -378,7 +385,6 @@ jobs:
           # Copy Fedora packages
           if [ -d /tmp/artifacts/fedora-packages ]; then
             for pkg in /tmp/artifacts/fedora-packages/*.rpm; do
-              [ -f "$pkg" ] || continue
               pkgname=$(basename "$pkg")
               if [ ! -f "/tmp/repo/fedora/$pkgname" ]; then
                 cp "$pkg" /tmp/repo/fedora/
@@ -389,15 +395,23 @@ jobs:
           # Copy Void packages
           if [ -d /tmp/artifacts/void-packages ]; then
             for pkg in /tmp/artifacts/void-packages/*.xbps; do
-              [ -f "$pkg" ] || continue
               pkgname=$(basename "$pkg")
               if [ ! -f "/tmp/repo/void/$pkgname" ]; then
                 cp "$pkg" /tmp/repo/void/
-                [ -f "$pkg.sig" ] && cp "$pkg.sig" /tmp/repo/void/
-                [ -f "$pkg.sig2" ] && cp "$pkg.sig2" /tmp/repo/void/
+                if [ -f "$pkg.sig" ]; then
+                  cp "$pkg.sig" /tmp/repo/void/
+                fi
+                if [ -f "$pkg.sig2" ]; then
+                  cp "$pkg.sig2" /tmp/repo/void/
+                fi
               fi
             done
           fi
+
+          echo "Copied package counts:"
+          echo "Arch: $(ls -1 /tmp/repo/arch/*.pkg.tar.zst 2>/dev/null | wc -l)"
+          echo "Fedora: $(ls -1 /tmp/repo/fedora/*.rpm 2>/dev/null | wc -l)"
+          echo "Void: $(ls -1 /tmp/repo/void/*.xbps 2>/dev/null | wc -l)"
       
       - name: Create repository metadata
         run: |
