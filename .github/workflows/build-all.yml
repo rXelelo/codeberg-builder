@@ -104,23 +104,25 @@ jobs:
       - name: Build Fedora packages
         run: |
           dnf install -y rpm-build rpmdevtools dnf-plugins-core rpm-sign gnupg2 pinentry sudo spectool
-          cd /tmp/packages/fedora
+          FEDORA_DIR=/tmp/packages/fedora
+          cd "$FEDORA_DIR"
           useradd -m builder && echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           
           # Setup rpmbuild directory structure
           rpmdev-setuptree
           
-          for spec in *.spec; do
+          for spec in $(ls "$FEDORA_DIR"/*.spec 2>/dev/null | xargs -n1 basename); do
             if [[ "$(basename "$spec")" == _* ]]; then
               echo "Skipping $spec (starts with underscore)"
               continue
             fi
-            [ -f "$spec" ] || continue
+            spec_path="$FEDORA_DIR/$spec"
+            [ -f "$spec_path" ] || continue
             
             # Extract version and release from spec file
             specname=$(basename "$spec" .spec)
-            pkgver=$(grep "^Version:" "$spec" | awk '{print $2}')
-            pkgrel=$(grep "^Release:" "$spec" | awk '{print $2}' | cut -d'%' -f1)
+            pkgver=$(grep "^Version:" "$spec_path" | awk '{print $2}')
+            pkgrel=$(grep "^Release:" "$spec_path" | awk '{print $2}' | cut -d'%' -f1)
             pkgver_full="${specname}-${pkgver}-${pkgrel}"
             
             # Check if exact version-release already exists in repo
@@ -145,7 +147,7 @@ jobs:
             fi
             
             # Copy spec file
-            cp "$spec" ~/rpmbuild/SPECS/
+            cp "$spec_path" ~/rpmbuild/SPECS/
             
             # Copy sources if they exist locally
             [ -d sources ] && cp sources/* ~/rpmbuild/SOURCES/ || true
@@ -159,6 +161,9 @@ jobs:
             
             # Build packages
             rpmbuild -ba "$spec"
+
+            # Return to Fedora specs directory for next iteration
+            cd "$FEDORA_DIR"
             
             # Skip GPG signing (not supported in container)
             
