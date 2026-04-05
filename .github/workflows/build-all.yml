@@ -91,7 +91,7 @@ jobs:
       
       - name: Build Fedora packages
         run: |
-          dnf install -y rpm-build rpmdevtools dnf-plugins-core rpm-sign gnupg2 pinentry sudo
+          dnf install -y rpm-build rpmdevtools dnf-plugins-core rpm-sign gnupg2 pinentry sudo spectool
           cd /tmp/packages/fedora
           useradd -m builder && echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
           
@@ -120,11 +120,14 @@ jobs:
               # Copy spec file
               cp "$spec" ~/rpmbuild/SPECS/
               
-              # Copy sources if they exist
+              # Copy sources if they exist locally
               [ -d sources ] && cp sources/* ~/rpmbuild/SOURCES/ || true
               
-              # Install build dependencies
+              # Download sources using spectool
               cd ~/rpmbuild/SPECS
+              spectool -g -R "$spec" || true
+              
+              # Install build dependencies
               dnf builddep -y "$spec"
               
               # Build packages
@@ -164,13 +167,19 @@ jobs:
       volumes:
         - /dev:/dev
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      
-      - name: Clone Packages repository
+      - name: Install dependencies
         run: |
           xbps-install -Syu xbps
           xbps-install -y git base-devel gnupg2
+      
+      - name: Checkout repository
+        run: |
+          git clone https://github.com/${{ github.repository }}.git /workspace
+          cd /workspace
+          git checkout ${{ github.sha }}
+      
+      - name: Clone Packages repository
+        run: |
           git clone https://codeberg.org/UniversalRepository/Packages.git /tmp/packages
       
       - name: Build Void packages
