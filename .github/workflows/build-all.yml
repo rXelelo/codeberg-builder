@@ -457,11 +457,10 @@ jobs:
                 ghcr.io/void-linux/void-glibc-full:latest sh -c "
                   xbps-install -Syu xbps
                   cd /repo
-                  XBPS_ARCH=x86_64 xbps-rindex --signedby 'Universal Repository CI <ci@universalrepo.local>' --privkey /sign/id_rsa -s /repo
                   for pkg in *.xbps; do
                     xbps-rindex --privkey /sign/id_rsa -S /repo/\$pkg
                   done
-                  XBPS_ARCH=x86_64 xbps-rindex -a *.xbps
+                  XBPS_ARCH=x86_64 xbps-rindex --signedby 'Universal Repository CI <ci@universalrepo.local>' --privkey /sign/id_rsa -s /repo
                 " || echo "Void signing skipped"
 
               rm -rf /tmp/xbps-sign
