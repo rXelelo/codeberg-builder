@@ -443,6 +443,31 @@ jobs:
               cd /repo
               XBPS_ARCH=x86_64 xbps-rindex -a *.xbps
             " || echo "Void repo creation skipped"
+
+            # Sign Void packages and repository index (optional)
+            if [ -n "${{ secrets.XBPS_PRIVATE_KEY }}" ]; then
+              echo "Signing Void packages and repository metadata..."
+              mkdir -p /tmp/xbps-sign
+              printf '%s\n' "${{ secrets.XBPS_PRIVATE_KEY }}" > /tmp/xbps-sign/id_rsa
+              chmod 600 /tmp/xbps-sign/id_rsa
+
+              docker run --rm \
+                -v /tmp/repo/void:/repo \
+                -v /tmp/xbps-sign:/sign \
+                ghcr.io/void-linux/void-glibc-full:latest sh -c "
+                  xbps-install -Syu xbps
+                  cd /repo
+                  XBPS_ARCH=x86_64 xbps-rindex --signedby 'Universal Repository CI <ci@universalrepo.local>' --privkey /sign/id_rsa -s /repo
+                  for pkg in *.xbps; do
+                    xbps-rindex --privkey /sign/id_rsa -S /repo/\$pkg
+                  done
+                  XBPS_ARCH=x86_64 xbps-rindex -a *.xbps
+                " || echo "Void signing skipped"
+
+              rm -rf /tmp/xbps-sign
+            else
+              echo "XBPS_PRIVATE_KEY secret not set; skipping Void package signing"
+            fi
           fi
       
       - name: Push all changes to repo
