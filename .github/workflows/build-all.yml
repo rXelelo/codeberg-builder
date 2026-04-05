@@ -20,10 +20,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       
-      - name: Clone Packages repository
+      - name: Clone Packages and Repo
         run: |
           pacman -Syu --noconfirm git
           git clone https://codeberg.org/UniversalRepository/Packages.git /tmp/packages
+          git clone https://codeberg.org/UniversalRepository/repo.git /tmp/repo
       
       - name: Build Arch packages
         run: |
@@ -34,37 +35,47 @@ jobs:
           for pkgdir in */; do
             pkgname=$(basename "$pkgdir")
             [[ "$pkgname" == _* ]] && continue
-            if [ -f "$pkgdir/PKGBUILD" ]; then
-              echo "Building Arch package: $pkgname"
-              cd "$pkgdir"
-              chown -R builder:builder .
-              
-              # Enable loopback for GPG
-              su builder -c "mkdir -p ~/.gnupg && echo \"allow-loopback-pinentry\" > ~/.gnupg/gpg-agent.conf"
-              su builder -c "echo \"pinentry-mode loopback\" > ~/.gnupg/gpg.conf"
-              
-              # Import Key if provided
-              if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
-                echo "${{ secrets.GPG_PRIVATE_KEY }}" | su builder -c "gpg --batch --import"
-              fi
-              
-              # Build
-              su builder -c "makepkg -sf --noconfirm"
-              
-              # Sign packages if GPG key is available
-              if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
-                for pkg in *.pkg.tar.zst; do
-                  [[ "$pkg" == *"-debug-"* ]] && continue
-                  [ -f "$pkg" ] || continue
-                  echo "Signing $pkg..."
-                  echo "${{ secrets.GPG_PASSPHRASE }}" | su builder -c "gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --detach-sign $pkg"
-                done
-              fi
-              
-              cd ..
-              echo "Built packages in $pkgdir:"
-              ls -lh "$pkgdir"/*.pkg.tar.zst 2>/dev/null || echo "No packages found"
+            [ -f "$pkgdir/PKGBUILD" ] || continue
+            
+            # Extract version and revision from PKGBUILD
+            source "$pkgdir/PKGBUILD"
+            pkgver_full="${pkgname}-${pkgver}-${pkgrel}"
+            
+            # Check if package already exists in repo
+            if ls /tmp/repo/arch/${pkgname}-*-*.pkg.tar.zst 1>/dev/null 2>&1; then
+              echo "Package $pkgver_full already exists in repo, skipping"
+              continue
             fi
+            
+            echo "Building Arch package: $pkgver_full"
+            cd "$pkgdir"
+            chown -R builder:builder .
+            
+            # Enable loopback for GPG
+            su builder -c "mkdir -p ~/.gnupg && echo \"allow-loopback-pinentry\" > ~/.gnupg/gpg-agent.conf"
+            su builder -c "echo \"pinentry-mode loopback\" > ~/.gnupg/gpg.conf"
+            
+            # Import Key if provided
+            if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
+              echo "${{ secrets.GPG_PRIVATE_KEY }}" | su builder -c "gpg --batch --import"
+            fi
+            
+            # Build
+            su builder -c "makepkg -sf --noconfirm"
+            
+            # Sign packages if GPG key is available
+            if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
+              for pkg in *.pkg.tar.zst; do
+                [[ "$pkg" == *"-debug-"* ]] && continue
+                [ -f "$pkg" ] || continue
+                echo "Signing $pkg..."
+                echo "${{ secrets.GPG_PASSPHRASE }}" | su builder -c "gpg --batch --yes --pinentry-mode loopback --passphrase-fd 0 --detach-sign $pkg"
+              done
+            fi
+            
+            cd ..
+            echo "Built packages in $pkgdir:"
+            ls -lh "$pkgdir"/*.pkg.tar.zst 2>/dev/null || echo "No packages found"
           done
       
       - name: Upload Arch packages
@@ -84,10 +95,11 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       
-      - name: Clone Packages repository
+      - name: Clone Packages and Repo
         run: |
           dnf install -y git
           git clone https://codeberg.org/UniversalRepository/Packages.git /tmp/packages
+          git clone https://codeberg.org/UniversalRepository/repo.git /tmp/repo
       
       - name: Build Fedora packages
         run: |
@@ -103,51 +115,56 @@ jobs:
               echo "Skipping $spec (starts with underscore)"
               continue
             fi
-            if [ -f "$spec" ]; then
-              specname=$(basename "$spec" .spec)
-              echo "Building Fedora package from: $spec"
-              
-              # Setup GPG if key is provided
-              if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
-                echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
-                GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | awk "{print \$2}" | cut -d"/" -f2 | head -1)
-                
-                # Configure RPM to use GPG
-                echo "%_signature gpg" >> ~/.rpmmacros
-                echo "%_gpg_name $GPG_KEY_ID" >> ~/.rpmmacros
-              fi
-              
-              # Copy spec file
-              cp "$spec" ~/rpmbuild/SPECS/
-              
-              # Copy sources if they exist locally
-              [ -d sources ] && cp sources/* ~/rpmbuild/SOURCES/ || true
-              
-              # Download sources using spectool
-              cd ~/rpmbuild/SPECS
-              spectool -g -R "$spec" || true
-              
-              # Install build dependencies
-              dnf builddep -y "$spec"
-              
-              # Build packages
-              rpmbuild -ba "$spec"
-                
-                # Sign packages if GPG key is available
-                if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
-                  for pkg in ~/rpmbuild/RPMS/*/*.rpm ~/rpmbuild/SRPMS/*.rpm; do
-                    [ -f "$pkg" ] || continue
-                    echo "Skipping GPG signing for $pkg (not supported in container)"
-                  done
-                fi
-              
-              # Copy built packages back
-              cp ~/rpmbuild/RPMS/*/*.rpm /tmp/packages/fedora/ 2>/dev/null || true
-              cp ~/rpmbuild/SRPMS/*.rpm /tmp/packages/fedora/ 2>/dev/null || true
-              
-              echo "Built packages:"
-              ls -lh /tmp/packages/fedora/*.rpm 2>/dev/null || echo "No packages found"
+            [ -f "$spec" ] || continue
+            
+            # Extract version and release from spec file
+            specname=$(basename "$spec" .spec)
+            pkgver=$(grep "^Version:" "$spec" | awk '{print $2}')
+            pkgrel=$(grep "^Release:" "$spec" | awk '{print $2}' | cut -d'%' -f1)
+            pkgver_full="${specname}-${pkgver}-${pkgrel}"
+            
+            # Check if package already exists in repo
+            if ls /tmp/repo/fedora/${specname}-*-*.fc*.x86_64.rpm 1>/dev/null 2>&1; then
+              echo "Package $pkgver_full already exists in repo, skipping"
+              continue
             fi
+            
+            echo "Building Fedora package from: $pkgver_full"
+            
+            # Setup GPG if key is provided
+            if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
+              echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
+              GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | awk "{print \$2}" | cut -d"/" -f2 | head -1)
+              
+              # Configure RPM to use GPG
+              echo "%_signature gpg" >> ~/.rpmmacros
+              echo "%_gpg_name $GPG_KEY_ID" >> ~/.rpmmacros
+            fi
+            
+            # Copy spec file
+            cp "$spec" ~/rpmbuild/SPECS/
+            
+            # Copy sources if they exist locally
+            [ -d sources ] && cp sources/* ~/rpmbuild/SOURCES/ || true
+            
+            # Download sources using spectool
+            cd ~/rpmbuild/SPECS
+            spectool -g -R "$spec" || true
+            
+            # Install build dependencies
+            dnf builddep -y "$spec"
+            
+            # Build packages
+            rpmbuild -ba "$spec"
+            
+            # Skip GPG signing (not supported in container)
+            
+            # Copy built packages back
+            cp ~/rpmbuild/RPMS/*/*.rpm /tmp/packages/fedora/ 2>/dev/null || true
+            cp ~/rpmbuild/SRPMS/*.rpm /tmp/packages/fedora/ 2>/dev/null || true
+            
+            echo "Built packages:"
+            ls -lh /tmp/packages/fedora/*.rpm 2>/dev/null || echo "No packages found"
           done
       
       - name: Upload Fedora packages
@@ -172,11 +189,15 @@ jobs:
           xbps-install -y git base-devel gnupg2
       
       - name: Checkout repository
-        uses: actions/checkout@v4
+        run: |
+          git clone https://github.com/${{ github.repository }}.git /workspace
+          cd /workspace
+          git checkout ${{ github.sha }}
       
-      - name: Clone Packages repository
+      - name: Clone Packages and Repo
         run: |
           git clone https://codeberg.org/UniversalRepository/Packages.git /tmp/packages
+          git clone https://codeberg.org/UniversalRepository/repo.git /tmp/repo
       
       - name: Build Void packages
         run: |
@@ -196,36 +217,36 @@ jobs:
               echo "Skipping $pkgdir (starts with underscore)"
               continue
             fi
-            if [ -f "$pkgdir/template" ]; then
-              echo "Building Void package: $pkgname"
-              
-              # Copy template to srcpkgs
-              mkdir -p /void-packages/srcpkgs/$pkgname
-              cp "$pkgdir/template" /void-packages/srcpkgs/$pkgname/
-              chown -R builder:builder /void-packages/srcpkgs/$pkgname
-              
-              # Build package
-              sudo -Eu builder sh -c "cd /void-packages && ./xbps-src pkg $pkgname"
-              
-              # Sign packages if GPG key is available
-              if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
-                echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
-                GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | awk "{print \$2}" | cut -d"/" -f2 | head -1)
-                
-                for pkg in /void-packages/hostdir/binpkgs/${pkgname}-*.xbps; do
-                  [ -f "$pkg" ] || continue
-                  echo "Signing $pkg..."
-                  echo "${{ secrets.GPG_PASSPHRASE }}" | xbps-rindex --sign --signedby "$GPG_KEY_ID" "$pkg"
-                done
-              fi
-              
-              # Copy built packages to output
-              find /void-packages/hostdir/binpkgs -name "${pkgname}-*.xbps" -exec cp {} /tmp/packages/void/ \;
-              find /void-packages/hostdir/binpkgs -name "${pkgname}-*.xbps.sig*" -exec cp {} /tmp/packages/void/ \; 2>/dev/null || true
-              
-              echo "Built packages:"
-              ls -lh /tmp/packages/void/*.xbps 2>/dev/null || echo "No packages found"
+            [ -f "$pkgdir/template" ] || continue
+            
+            # Extract version and revision from template
+            source "$pkgdir/template"
+            pkgver_full="${pkgname}-${version}-${revision}"
+            
+            # Check if package already exists in repo
+            if ls /tmp/repo/void/${pkgname}-*-*.xbps 1>/dev/null 2>&1; then
+              echo "Package $pkgver_full already exists in repo, skipping"
+              continue
             fi
+            
+            echo "Building Void package: $pkgver_full"
+            
+            # Copy template to srcpkgs
+            mkdir -p /void-packages/srcpkgs/$pkgname
+            cp "$pkgdir/template" /void-packages/srcpkgs/$pkgname/
+            chown -R builder:builder /void-packages/srcpkgs/$pkgname
+            
+            # Build package
+            sudo -Eu builder sh -c "cd /void-packages && ./xbps-src pkg $pkgname"
+            
+            # Skip GPG signing (not supported in container)
+            
+            # Copy built packages to output
+            find /void-packages/hostdir/binpkgs -name "${pkgname}-*.xbps" -exec cp {} /tmp/packages/void/ \;
+            find /void-packages/hostdir/binpkgs -name "${pkgname}-*.xbps.sig*" -exec cp {} /tmp/packages/void/ \; 2>/dev/null || true
+            
+            echo "Built packages:"
+            ls -lh /tmp/packages/void/*.xbps 2>/dev/null || echo "No packages found"
           done
       
       - name: Upload Void packages
