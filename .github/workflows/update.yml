@@ -1,0 +1,109 @@
+name: Update Void Templates
+
+on:
+  schedule:
+    - cron: '0 */3 * * *'
+  workflow_dispatch:
+
+jobs:
+  update-void:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/void-linux/void-glibc-full:latest
+      options: --privileged
+      volumes:
+        - /dev:/dev
+
+    steps:
+      - name: Prepare container
+        run: |
+          mkdir -p /etc/xbps.d
+          cp /usr/share/xbps.d/*-repository-*.conf /etc/xbps.d/
+          sed -i 's|repo-default|repo-ci|g' /etc/xbps.d/*-repository-*.conf
+          xbps-install -Syu xbps
+          xbps-install -yu
+          xbps-install -y sudo bash curl git libstdc++ xtools
+          useradd -G xbuilder -M builder
+
+      - name: Clone Packages repository
+        run: |
+          git clone "https://oauth2:${{ secrets.CODEBERG_TOKEN }}@codeberg.org/UniversalRepository/Packages.git" /work/packages
+
+      - name: Setup void-packages
+        run: |
+          git clone --depth=1 https://github.com/void-linux/void-packages.git /work/void-packages
+          cp -r /work/packages/void/* /work/void-packages/srcpkgs/
+          chown -R builder:builder /work/void-packages
+
+      - name: Prepare masterdir
+        run: |
+          cd /work/void-packages
+          echo XBPS_BUILD_ENVIRONMENT=void-packages-ci >> etc/conf
+          echo XBPS_CHROOT_CMD=uchroot >> etc/conf
+          echo XBPS_ALLOW_RESTRICTED=yes >> etc/conf
+          sudo -Eu builder ./xbps-src binary-bootstrap
+
+      - name: Check and apply updates
+        id: autoupdate
+        run: |
+          UPDATED=""
+
+          for pkgdir in /work/packages/void/*; do
+            [ -d "$pkgdir" ] || continue
+            pkg=$(basename "$pkgdir")
+
+            case "$pkg" in
+              _*)
+                echo "=> Skipping $pkg (starts with underscore)"
+                continue
+                ;;
+            esac
+
+            [ -f "$pkgdir/template" ] || continue
+            echo "=> Checking $pkg..."
+
+            UPDATE=$(sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src update-check $pkg 2>/dev/null" | tail -1 || true)
+            echo "$UPDATE" | grep -q ' -> ' || continue
+
+            OLD_VER=$(echo "$UPDATE" | awk -F' -> ' '{print $1}' | rev | cut -d- -f1 | rev)
+            NEW_VER=$(echo "$UPDATE" | awk -F' -> ' '{print $2}' | rev | cut -d- -f1 | rev | tr -d '\n\r')
+
+            [ -n "$NEW_VER" ] || continue
+            [ "$OLD_VER" = "$NEW_VER" ] && continue
+
+            echo "=> $pkg: $OLD_VER -> $NEW_VER"
+
+            sed -i "s|^version=.*|version=${NEW_VER}|" "/work/packages/void/$pkg/template"
+            sed -i "s|^revision=.*|revision=1|" "/work/packages/void/$pkg/template"
+
+            cp "/work/packages/void/$pkg/template" "/work/void-packages/srcpkgs/$pkg/template"
+            chown builder:builder "/work/void-packages/srcpkgs/$pkg/template"
+
+            if sudo -Eu builder sh -c "cd /work/void-packages && xgensum -i srcpkgs/$pkg/template"; then
+              cp "/work/void-packages/srcpkgs/$pkg/template" "/work/packages/void/$pkg/template"
+              echo "=> $pkg checksum updated"
+              UPDATED="$UPDATED $pkg"
+            else
+              echo "=> WARNING: checksum failed for $pkg, rolling back"
+              git -C /work/packages checkout -- "void/$pkg/template"
+            fi
+          done
+
+          UPDATED=$(echo "$UPDATED" | xargs)
+          if [ -n "$UPDATED" ]; then
+            echo "has_updates=true" >> "$GITHUB_OUTPUT"
+            echo "updated_packages=$UPDATED" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_updates=false" >> "$GITHUB_OUTPUT"
+            echo "updated_packages=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push updates
+        if: steps.autoupdate.outputs.has_updates == 'true'
+        run: |
+          cd /work/packages
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add void/
+          git commit -m "void: auto-update ${{ steps.autoupdate.outputs.updated_packages }}"
+          git push

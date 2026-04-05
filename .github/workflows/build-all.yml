@@ -9,6 +9,16 @@ on:
       - 'fedora/**'
       - 'void/**'
   workflow_dispatch:
+    inputs:
+      skip_packages:
+        description: 'Optional comma-separated package names to skip (without leading underscore)'
+        required: false
+        default: ''
+      skip_if_in_other_repos:
+        description: 'Skip package build if same package exists in other distro repos'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   build-arch:
@@ -27,7 +37,11 @@ jobs:
           git clone https://codeberg.org/UniversalRepository/repo.git /tmp/repo
       
       - name: Build Arch packages
+        shell: bash
         run: |
+          SKIP_INPUT="${{ github.event.inputs.skip_packages }}"
+          SKIP_IF_OTHER="${{ github.event.inputs.skip_if_in_other_repos }}"
+
           pacman -Syu --noconfirm gnupg sudo
           cd /tmp/packages/arch
           useradd -m builder && echo "builder ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers
@@ -36,6 +50,14 @@ jobs:
             pkgname=$(basename "$pkgdir")
             [[ "$pkgname" == _* ]] && continue
             [ -f "$pkgdir/PKGBUILD" ] || continue
+
+            # Skip packages provided from workflow_dispatch input
+            if [ -n "$SKIP_INPUT" ]; then
+              echo ",$SKIP_INPUT," | grep -q ",$pkgname," && {
+                echo "Package $pkgname is in skip list, skipping"
+                continue
+              }
+            fi
             
             # Extract version and revision from PKGBUILD
             source "$pkgdir/PKGBUILD"
@@ -45,6 +67,14 @@ jobs:
             if ls /tmp/repo/arch/${pkgname}-*-*.pkg.tar.zst 1>/dev/null 2>&1; then
               echo "Package $pkgver_full already exists in repo, skipping"
               continue
+            fi
+
+            # Optional: skip if package exists in other repos
+            if [ "$SKIP_IF_OTHER" = "true" ]; then
+              if ls /tmp/repo/fedora/${pkgname}-*.rpm 1>/dev/null 2>&1 || ls /tmp/repo/void/${pkgname}-*.xbps 1>/dev/null 2>&1; then
+                echo "Package $pkgname exists in other repos, skipping"
+                continue
+              fi
             fi
             
             echo "Building Arch package: $pkgver_full"
@@ -102,7 +132,11 @@ jobs:
           git clone https://codeberg.org/UniversalRepository/repo.git /tmp/repo
       
       - name: Build Fedora packages
+        shell: bash
         run: |
+          SKIP_INPUT="${{ github.event.inputs.skip_packages }}"
+          SKIP_IF_OTHER="${{ github.event.inputs.skip_if_in_other_repos }}"
+
           dnf install -y rpm-build rpmdevtools dnf-plugins-core rpm-sign gnupg2 pinentry sudo spectool
           FEDORA_DIR=/tmp/packages/fedora
           cd "$FEDORA_DIR"
@@ -112,10 +146,12 @@ jobs:
           rpmdev-setuptree
           
           for spec in $(ls "$FEDORA_DIR"/*.spec 2>/dev/null | xargs -n1 basename); do
-            if [[ "$(basename "$spec")" == _* ]]; then
-              echo "Skipping $spec (starts with underscore)"
-              continue
-            fi
+            case "$(basename "$spec")" in
+              _*)
+                echo "Skipping $spec (starts with underscore)"
+                continue
+                ;;
+            esac
             spec_path="$FEDORA_DIR/$spec"
             [ -f "$spec_path" ] || continue
             
@@ -124,11 +160,27 @@ jobs:
             pkgver=$(grep "^Version:" "$spec_path" | awk '{print $2}')
             pkgrel=$(grep "^Release:" "$spec_path" | awk '{print $2}' | cut -d'%' -f1)
             pkgver_full="${specname}-${pkgver}-${pkgrel}"
+
+            # Skip packages provided from workflow_dispatch input
+            if [ -n "$SKIP_INPUT" ]; then
+              echo ",$SKIP_INPUT," | grep -q ",$specname," && {
+                echo "Package $specname is in skip list, skipping"
+                continue
+              }
+            fi
             
             # Check if exact version-release already exists in repo
             if ls /tmp/repo/fedora/${specname}-${pkgver}-${pkgrel}.fc*.x86_64.rpm 1>/dev/null 2>&1; then
               echo "Package $pkgver_full already exists in repo, skipping"
               continue
+            fi
+
+            # Optional: skip if package exists in other repos
+            if [ "$SKIP_IF_OTHER" = "true" ]; then
+              if ls /tmp/repo/arch/${specname}-*.pkg.tar.zst 1>/dev/null 2>&1 || ls /tmp/repo/void/${specname}-*.xbps 1>/dev/null 2>&1; then
+                echo "Package $specname exists in other repos, skipping"
+                continue
+              fi
             fi
             
              echo "Building Fedora package from: $pkgver_full"
@@ -211,6 +263,9 @@ jobs:
       
       - name: Build Void packages
         run: |
+          SKIP_INPUT="${{ github.event.inputs.skip_packages }}"
+          SKIP_IF_OTHER="${{ github.event.inputs.skip_if_in_other_repos }}"
+
           VOID_DIR=/tmp/packages/void
           git clone --depth=1 https://github.com/void-linux/void-packages.git /void-packages
           cd /void-packages
@@ -231,6 +286,14 @@ jobs:
               ;;
             esac
             [ -f "$pkgdir/template" ] || continue
+
+            # Skip packages provided from workflow_dispatch input
+            if [ -n "$SKIP_INPUT" ]; then
+              echo ",$SKIP_INPUT," | grep -q ",$pkgname," && {
+                echo "Package $pkgname is in skip list, skipping"
+                continue
+              }
+            fi
             
             # Extract version and revision from template without sourcing
             version=$(grep '^version=' "$pkgdir/template" | head -1 | cut -d'=' -f2)
@@ -241,6 +304,14 @@ jobs:
             if ls /tmp/repo/void/${pkgname}-${version}_${revision}*.xbps 1>/dev/null 2>&1; then
               echo "Package $pkgver_full already exists in repo, skipping"
               continue
+            fi
+
+            # Optional: skip if package exists in other repos
+            if [ "$SKIP_IF_OTHER" = "true" ]; then
+              if ls /tmp/repo/arch/${pkgname}-*.pkg.tar.zst 1>/dev/null 2>&1 || ls /tmp/repo/fedora/${pkgname}-*.rpm 1>/dev/null 2>&1; then
+                echo "Package $pkgname exists in other repos, skipping"
+                continue
+              fi
             fi
             
             echo "Building Void package: $pkgver_full"
