@@ -209,12 +209,16 @@ jobs:
       - name: Build Void packages
         run: |
           cd /tmp/packages/void
-          useradd -m builder && usermod -G xbuilder builder
+          useradd -m builder && usermod -aG xbuilder builder
           
           # Setup void-packages
           git clone --depth=1 https://github.com/void-linux/void-packages.git /void-packages
           cd /void-packages
-          ./xbps-src binary-bootstrap
+          chown -R builder:builder /void-packages
+          echo XBPS_BUILD_ENVIRONMENT=void-packages-ci >> etc/conf
+          echo XBPS_CHROOT_CMD=uchroot >> etc/conf
+          echo XBPS_ALLOW_RESTRICTED=yes >> etc/conf
+          sudo -Eu builder ./xbps-src binary-bootstrap
           
           cd /tmp/packages/void
           for pkgdir in */; do
@@ -240,10 +244,10 @@ jobs:
             # Copy template to srcpkgs
             mkdir -p /void-packages/srcpkgs/$pkgname
             cp "$pkgdir/template" /void-packages/srcpkgs/$pkgname/
-            chown -R root:root /void-packages/srcpkgs/$pkgname
+            chown -R builder:builder /void-packages/srcpkgs/$pkgname
             
             # Build package
-            sh -c "cd /void-packages && ./xbps-src -E pkg $pkgname"
+            sudo -Eu builder sh -c "cd /void-packages && ./xbps-src -E pkg $pkgname"
             
             # Skip GPG signing (not supported in container)
             
