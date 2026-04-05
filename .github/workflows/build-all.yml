@@ -303,5 +303,6 @@ jobs:
             echo "No changes to commit"
           else
             git commit -m "Update packages [CI] - $(date -u +'%Y-%m-%d %H:%M:%S UTC')"
-            git push https://oauth2:${{ secrets.CODEBERG_TOKEN }}@codeberg.org/UniversalRepository/repo.git main
+            BRANCH=$(git rev-parse --abbrev-ref HEAD)
+            git push https://oauth2:${{ secrets.CODEBERG_TOKEN }}@codeberg.org/UniversalRepository/repo.git $BRANCH
           fi
