@@ -295,32 +295,34 @@ jobs:
       
       - name: Create repository metadata
         run: |
-          # Install required tools
-          apt-get update -qq
-          apt-get install -y -qq pacman-contrib createrepo-c xbps-rindex 2>/dev/null || true
-          
           # Create Arch repository
           if [ -d /tmp/repo/arch ] && ls /tmp/repo/arch/*.pkg.tar.zst 1>/dev/null 2>&1; then
             echo "Creating Arch repository..."
-            cd /tmp/repo/arch
-            repo-add archrepo.db.tar.gz *.pkg.tar.zst || echo "Arch repo creation skipped"
-            cd /tmp/repo
+            docker run --rm -v /tmp/repo/arch:/repo archlinux:base-devel bash -c "
+              pacman -Sy --noconfirm pacman-contrib
+              cd /repo
+              repo-add archrepo.db.tar.gz *.pkg.tar.zst
+            " || echo "Arch repo creation skipped"
           fi
           
           # Create Fedora repository
           if [ -d /tmp/repo/fedora ] && ls /tmp/repo/fedora/*.rpm 1>/dev/null 2>&1; then
             echo "Creating Fedora repository..."
-            cd /tmp/repo/fedora
-            createrepo_c . || echo "Fedora repo creation skipped"
-            cd /tmp/repo
+            docker run --rm -v /tmp/repo/fedora:/repo fedora:latest bash -c "
+              dnf install -y createrepo_c
+              cd /repo
+              createrepo_c .
+            " || echo "Fedora repo creation skipped"
           fi
           
           # Create Void repository
           if [ -d /tmp/repo/void ] && ls /tmp/repo/void/*.xbps 1>/dev/null 2>&1; then
             echo "Creating Void repository..."
-            cd /tmp/repo/void
-            xbps-rindex -a *.xbps || echo "Void repo creation skipped"
-            cd /tmp/repo
+            docker run --rm -v /tmp/repo/void:/repo ghcr.io/void-linux/void-buildroot-musl:latest bash -c "
+              xbps-install -Syu xbps
+              cd /repo
+              xbps-rindex -a *.xbps
+            " || echo "Void repo creation skipped"
           fi
       
       - name: Push all changes to repo
