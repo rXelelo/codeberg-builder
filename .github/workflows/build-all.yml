@@ -129,9 +129,12 @@ jobs:
               continue
             fi
             
-            echo "Building Fedora package from: $pkgver_full"
-            
-            # Setup GPG if key is provided
+             echo "Building Fedora package from: $pkgver_full"
+             
+             # Clean build directories for this build (but keep RPMS/SRPMS)
+             rm -rf ~/rpmbuild/BUILD/* ~/rpmbuild/BUILDROOT/*
+             
+             # Setup GPG if key is provided
             if [ -n "${{ secrets.GPG_PRIVATE_KEY }}" ]; then
               echo "${{ secrets.GPG_PRIVATE_KEY }}" | gpg --batch --import
               GPG_KEY_ID=$(gpg --list-secret-keys --keyid-format LONG | grep sec | awk "{print \$2}" | cut -d"/" -f2 | head -1)
