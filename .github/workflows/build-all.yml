@@ -178,7 +178,7 @@ jobs:
   build-void:
     runs-on: ubuntu-latest
     container:
-      image: ghcr.io/void-linux/void-buildroot-musl:latest
+      image: ghcr.io/void-linux/void-glibc-full:latest
       options: --privileged
       volumes:
         - /dev:/dev
@@ -186,13 +186,12 @@ jobs:
       - name: Install dependencies
         run: |
           xbps-install -Syu xbps
-          xbps-install -y git base-devel gnupg2
+          xbps-install -y git base-devel gnupg2 sudo bash curl git libstdc++
       
-      - name: Checkout repository
-        run: |
-          git clone https://github.com/${{ github.repository }}.git /workspace
-          cd /workspace
-          git checkout ${{ github.sha }}
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
       
       - name: Clone Packages and Repo
         run: |
