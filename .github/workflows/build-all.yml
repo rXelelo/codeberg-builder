@@ -514,7 +514,7 @@ jobs:
             docker run --rm -v /tmp/repo/arch:/repo archlinux:base-devel bash -c "
               pacman -Sy --noconfirm pacman-contrib
               cd /repo
-              repo-add archrepo.db.tar.gz *.pkg.tar.zst
+              repo-add universal-repo.db.tar.gz *.pkg.tar.zst
             " || echo "Arch repo creation skipped"
           fi
           
