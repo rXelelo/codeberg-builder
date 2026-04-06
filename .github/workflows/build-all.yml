@@ -34,6 +34,7 @@ jobs:
       
       - name: Clone Packages and Repo
         run: |
+          printf '\033[1;34m==> Stage: Clone Packages and Repo (Arch)\033[0m\n'
           pacman -Syu --noconfirm git
           git clone https://codeberg.org/UniversalRepository/Packages.git /tmp/packages
           git clone https://codeberg.org/UniversalRepository/repo.git /tmp/repo
@@ -41,6 +42,7 @@ jobs:
       - name: Build Arch packages
         shell: bash
         run: |
+          printf '\033[1;34m==> Stage: Build Arch packages\033[0m\n'
           SKIP_INPUT="${{ github.event.inputs.skip_packages }}"
           SKIP_IF_OTHER="${{ github.event.inputs.skip_if_in_other_repos }}"
 
@@ -132,6 +134,7 @@ jobs:
       
       - name: Clone Packages and Repo
         run: |
+          printf '\033[1;34m==> Stage: Clone Packages and Repo (Fedora)\033[0m\n'
           dnf install -y git
           git clone https://codeberg.org/UniversalRepository/Packages.git /tmp/packages
           git clone https://codeberg.org/UniversalRepository/repo.git /tmp/repo
@@ -139,6 +142,7 @@ jobs:
       - name: Build Fedora packages
         shell: bash
         run: |
+          printf '\033[1;34m==> Stage: Build Fedora packages\033[0m\n'
           SKIP_INPUT="${{ github.event.inputs.skip_packages }}"
           SKIP_IF_OTHER="${{ github.event.inputs.skip_if_in_other_repos }}"
 
@@ -250,6 +254,7 @@ jobs:
     steps:
       - name: Prepare container
         run: |
+          printf '\033[1;34m==> Stage: Prepare container (Void)\033[0m\n'
           mkdir -p /etc/xbps.d && cp /usr/share/xbps.d/*-repository-*.conf /etc/xbps.d/
           sed -i 's|repo-default|repo-ci|g' /etc/xbps.d/*-repository-*.conf
           xbps-install -Syu xbps
@@ -263,11 +268,13 @@ jobs:
       
       - name: Clone Packages and Repo
         run: |
+          printf '\033[1;34m==> Stage: Clone Packages and Repo (Void)\033[0m\n'
           git clone https://codeberg.org/UniversalRepository/Packages.git /tmp/packages
           git clone https://codeberg.org/UniversalRepository/repo.git /tmp/repo
       
       - name: Build Void packages
         run: |
+          printf '\033[1;34m==> Stage: Build Void packages\033[0m\n'
           SKIP_INPUT="${{ github.event.inputs.skip_packages }}"
           SKIP_IF_OTHER="${{ github.event.inputs.skip_if_in_other_repos }}"
 
@@ -362,10 +369,12 @@ jobs:
       
       - name: Clone repo repository
         run: |
+          printf '\033[1;34m==> Stage: Clone repo repository\033[0m\n'
           git clone https://codeberg.org/UniversalRepository/repo.git /tmp/repo
       
       - name: Copy packages to repo
         run: |
+          printf '\033[1;34m==> Stage: Copy packages to repo\033[0m\n'
           set -euo pipefail
           shopt -s nullglob globstar
 
@@ -508,6 +517,7 @@ jobs:
       
       - name: Create repository metadata
         run: |
+          printf '\033[1;34m==> Stage: Create repository metadata\033[0m\n'
           # Create Arch repository
           if [ -d /tmp/repo/arch ] && ls /tmp/repo/arch/*.pkg.tar.zst 1>/dev/null 2>&1; then
             echo "Creating Arch repository..."
@@ -515,6 +525,8 @@ jobs:
               pacman -Sy --noconfirm pacman-contrib
               cd /repo
               repo-add universal-repo.db.tar.gz *.pkg.tar.zst
+              mv universal-repo.db.tar.gz universal-repo.db
+              mv universal-repo.files.tar.gz u
             " || echo "Arch repo creation skipped"
           fi
           
@@ -564,6 +576,7 @@ jobs:
       
       - name: Push all changes to repo
         run: |
+          printf '\033[1;34m==> Stage: Push all changes to repo\033[0m\n'
           cd /tmp/repo
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"

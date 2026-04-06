@@ -23,6 +23,7 @@ jobs:
       - name: Parse Trigger Data
         id: parse
         run: |
+          printf '\033[1;34m==> Stage: Parse Trigger Data\033[0m\n'
           if [ "${{ github.event_name }}" = "repository_dispatch" ]; then
             REPO="${{ github.event.client_payload.repository.full_name }}"
             REF="${{ github.event.client_payload.ref }}"
@@ -44,12 +45,14 @@ jobs:
       - name: Clone Codeberg Source
         if: steps.parse.outputs.is_tag == 'true'
         run: |
+          printf '\033[1;34m==> Stage: Clone Codeberg Source\033[0m\n'
           git clone --depth 1 --branch ${{ steps.parse.outputs.tag }} \
             "https://oauth2:${{ secrets.CODEBERG_TOKEN }}@codeberg.org/${{ steps.parse.outputs.repo }}.git" source
 
       - name: Build & Sign PKGBUILD
         if: steps.parse.outputs.is_tag == 'true'
         run: |
+          printf '\033[1;34m==> Stage: Build & Sign PKGBUILD\033[0m\n'
           cd source
           if [ ! -f "PKGBUILD" ]; then exit 0; fi
 
@@ -89,6 +92,7 @@ jobs:
       - name: Create release & Upload to Codeberg
         if: steps.parse.outputs.is_tag == 'true'
         run: |
+          printf '\033[1;34m==> Stage: Create release & Upload to Codeberg\033[0m\n'
           REPO="${{ steps.parse.outputs.repo }}"
           TAG="${{ steps.parse.outputs.tag }}"
           REPO_NAME="${{ steps.parse.outputs.repo_name }}"
