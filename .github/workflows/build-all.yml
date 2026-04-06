@@ -366,14 +366,68 @@ jobs:
 
           mkdir -p /tmp/repo/arch /tmp/repo/fedora /tmp/repo/void
 
+          parse_arch_pkg() {
+            local file="$1"
+            local base arch rel ver name tmp
+            base="${file%.pkg.tar.zst}"
+            arch="${base##*-}"
+            tmp="${base%-*}"
+            rel="${tmp##*-}"
+            tmp="${tmp%-*}"
+            ver="${tmp##*-}"
+            name="${tmp%-*}"
+            printf '%s|%s-%s|%s\n' "$name" "$ver" "$rel" "$arch"
+          }
+
+          parse_fedora_pkg() {
+            local file="$1"
+            local base arch rel ver name tmp
+            base="${file%.rpm}"
+            arch="${base##*.}"
+            tmp="${base%.*}"
+            rel="${tmp##*-}"
+            tmp="${tmp%-*}"
+            ver="${tmp##*-}"
+            name="${tmp%-*}"
+            printf '%s|%s-%s|%s\n' "$name" "$ver" "$rel" "$arch"
+          }
+
+          parse_void_pkg() {
+            local file="$1"
+            local base arch verrev name tmp
+            base="${file%.xbps}"
+            arch="${base##*.}"
+            tmp="${base%.*}"
+            verrev="${tmp##*-}"
+            name="${tmp%-*}"
+            printf '%s|%s|%s\n' "$name" "$verrev" "$arch"
+          }
+
           echo "Artifact directories present:"
           ls -la /tmp/artifacts || true
           
           # Copy Arch packages
           if [ -d /tmp/artifacts/arch-packages ]; then
             for pkg in /tmp/artifacts/arch-packages/*.pkg.tar.zst; do
-              pkgname=$(basename "$pkg")
-              if [ ! -f "/tmp/repo/arch/$pkgname" ]; then
+              pkgfile=$(basename "$pkg")
+              IFS='|' read -r name verrel _ <<< "$(parse_arch_pkg "$pkgfile")"
+              skip_copy=false
+
+              for existing in /tmp/repo/arch/*.pkg.tar.zst; do
+                existing_file=$(basename "$existing")
+                IFS='|' read -r existing_name existing_verrel _ <<< "$(parse_arch_pkg "$existing_file")"
+                [ "$existing_name" = "$name" ] || continue
+
+                if [ "$existing_verrel" = "$verrel" ]; then
+                  echo "Arch: $pkgfile already present with same version ($verrel), skipping"
+                  skip_copy=true
+                else
+                  echo "Arch: replacing $existing_file with $pkgfile"
+                  rm -f "$existing" "$existing.sig"
+                fi
+              done
+
+              if [ "$skip_copy" = false ]; then
                 cp "$pkg" /tmp/repo/arch/
                 if [ -f "$pkg.sig" ]; then
                   cp "$pkg.sig" /tmp/repo/arch/
@@ -385,8 +439,25 @@ jobs:
           # Copy Fedora packages
           if [ -d /tmp/artifacts/fedora-packages ]; then
             for pkg in /tmp/artifacts/fedora-packages/*.rpm; do
-              pkgname=$(basename "$pkg")
-              if [ ! -f "/tmp/repo/fedora/$pkgname" ]; then
+              pkgfile=$(basename "$pkg")
+              IFS='|' read -r name verrel _ <<< "$(parse_fedora_pkg "$pkgfile")"
+              skip_copy=false
+
+              for existing in /tmp/repo/fedora/*.rpm; do
+                existing_file=$(basename "$existing")
+                IFS='|' read -r existing_name existing_verrel _ <<< "$(parse_fedora_pkg "$existing_file")"
+                [ "$existing_name" = "$name" ] || continue
+
+                if [ "$existing_verrel" = "$verrel" ]; then
+                  echo "Fedora: $pkgfile already present with same version ($verrel), skipping"
+                  skip_copy=true
+                else
+                  echo "Fedora: replacing $existing_file with $pkgfile"
+                  rm -f "$existing"
+                fi
+              done
+
+              if [ "$skip_copy" = false ]; then
                 cp "$pkg" /tmp/repo/fedora/
               fi
             done
@@ -395,8 +466,25 @@ jobs:
           # Copy Void packages
           if [ -d /tmp/artifacts/void-packages ]; then
             for pkg in /tmp/artifacts/void-packages/*.xbps; do
-              pkgname=$(basename "$pkg")
-              if [ ! -f "/tmp/repo/void/$pkgname" ]; then
+              pkgfile=$(basename "$pkg")
+              IFS='|' read -r name verrev _ <<< "$(parse_void_pkg "$pkgfile")"
+              skip_copy=false
+
+              for existing in /tmp/repo/void/*.xbps; do
+                existing_file=$(basename "$existing")
+                IFS='|' read -r existing_name existing_verrev _ <<< "$(parse_void_pkg "$existing_file")"
+                [ "$existing_name" = "$name" ] || continue
+
+                if [ "$existing_verrev" = "$verrev" ]; then
+                  echo "Void: $pkgfile already present with same version ($verrev), skipping"
+                  skip_copy=true
+                else
+                  echo "Void: replacing $existing_file with $pkgfile"
+                  rm -f "$existing" "$existing.sig" "$existing.sig2"
+                fi
+              done
+
+              if [ "$skip_copy" = false ]; then
                 cp "$pkg" /tmp/repo/void/
                 if [ -f "$pkg.sig" ]; then
                   cp "$pkg.sig" /tmp/repo/void/
