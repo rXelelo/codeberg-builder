@@ -115,7 +115,10 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: arch-packages
-          path: /tmp/packages/arch/
+          path: |
+            /tmp/packages/arch/**/*.pkg.tar.zst
+            /tmp/packages/arch/**/*.pkg.tar.zst.sig
+          if-no-files-found: ignore
           retention-days: 7
 
   build-fedora:
@@ -364,7 +367,7 @@ jobs:
       - name: Copy packages to repo
         run: |
           set -euo pipefail
-          shopt -s nullglob
+          shopt -s nullglob globstar
 
           mkdir -p /tmp/repo/arch /tmp/repo/fedora /tmp/repo/void
 
@@ -410,7 +413,7 @@ jobs:
           
           # Copy Arch packages
           if [ -d /tmp/artifacts/arch-packages ]; then
-            for pkg in /tmp/artifacts/arch-packages/*.pkg.tar.zst; do
+            for pkg in /tmp/artifacts/arch-packages/**/*.pkg.tar.zst; do
               pkgfile=$(basename "$pkg")
               IFS='|' read -r name verrel _ <<< "$(parse_arch_pkg "$pkgfile")"
               skip_copy=false
