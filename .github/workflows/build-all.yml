@@ -164,11 +164,10 @@ jobs:
 
           if ls /tmp/repo/arch/*.pkg.tar.zst 1>/dev/null 2>&1; then
             cd /tmp/repo/arch
-            rm universal-repo.db
-            rm universal-repo.files
+            rm -f universal-repo.db universal-repo.files
             repo-add universal-repo.db.tar.gz *.pkg.tar.zst
-            cp -f universal-repo.db.tar.gz universal-repo.db
-            cp -f universal-repo.files.tar.gz universal-repo.files
+            ln -sf universal-repo.db.tar.gz universal-repo.db
+            ln -sf universal-repo.files.tar.gz universal-repo.files
           fi
 
           cd /tmp/repo
