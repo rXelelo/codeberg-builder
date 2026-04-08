@@ -432,7 +432,7 @@ jobs:
           cp -r "$VOID_DIR"/* srcpkgs/
           chown -R builder:builder /void-packages
           sudo -Eu builder ./xbps-src binary-bootstrap
-          xbps-install -s
+          xbps-install -S
           sudo -Eu builder xbps-install -r /void-packages/masterdir-x86_64 jq curl -y
           
           for pkgdir in "$VOID_DIR"/*; do
