@@ -489,10 +489,14 @@ jobs:
             
             echo "Building Void package: $pkgver_full"
             
-            # Copy template to srcpkgs (normalize underscored directories to real package name)
-            mkdir -p /void-packages/srcpkgs/$pkgname
-            cp "$pkgdir/template" /void-packages/srcpkgs/$pkgname/
-            chown -R builder:builder /void-packages/srcpkgs/$pkgname
+            # Copy package sources to srcpkgs (normalize underscored directories to real package name)
+            rm -rf "/void-packages/srcpkgs/$pkgname"
+            mkdir -p "/void-packages/srcpkgs/$pkgname"
+            cp -a "$pkgdir"/. "/void-packages/srcpkgs/$pkgname/"
+            if [[ "$pkgdir_name" == _* ]]; then
+              rm -rf "/void-packages/srcpkgs/$pkgdir_name"
+            fi
+            chown -R builder:builder "/void-packages/srcpkgs/$pkgname"
             
             # Build package
             sudo -Eu builder sh -c "cd /void-packages && ./xbps-src -E pkg $pkgname"
