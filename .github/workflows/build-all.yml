@@ -444,15 +444,19 @@ jobs:
           cp -r "$VOID_DIR"/* srcpkgs/
           chown -R builder:builder /void-packages
           sudo -Eu builder ./xbps-src binary-bootstrap
+          xbps-install -S
+          sudo -Eu builder xbps-install -r /void-packages/masterdir-x86_64 jq curl
           
           for pkgdir in "$VOID_DIR"/*; do
             [ -d "$pkgdir" ] || continue
-            pkgname=$(basename "$pkgdir")
-            if [[ "$pkgname" == _* ]]; then
-              if [ -z "$UNDERSCORED_INPUT" ] || ! echo ",$UNDERSCORED_INPUT," | grep -q ",$pkgname,"; then
+            pkgdir_name=$(basename "$pkgdir")
+            pkgname="$pkgdir_name"
+            if [[ "$pkgdir_name" == _* ]]; then
+              if [ -z "$UNDERSCORED_INPUT" ] || ! echo ",$UNDERSCORED_INPUT," | grep -q ",$pkgdir_name,"; then
                 echo "Skipping $pkgdir (starts with underscore; not selected in build_underscored_packages)"
                 continue
               fi
+              pkgname="${pkgdir_name#_}"
             fi
             [ -f "$pkgdir/template" ] || continue
 
@@ -485,7 +489,7 @@ jobs:
             
             echo "Building Void package: $pkgver_full"
             
-            # Copy template to srcpkgs
+            # Copy template to srcpkgs (normalize underscored directories to real package name)
             mkdir -p /void-packages/srcpkgs/$pkgname
             cp "$pkgdir/template" /void-packages/srcpkgs/$pkgname/
             chown -R builder:builder /void-packages/srcpkgs/$pkgname
