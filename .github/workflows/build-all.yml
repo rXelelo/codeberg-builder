@@ -14,6 +14,10 @@ on:
         description: 'Optional comma-separated package names to skip (without leading underscore)'
         required: false
         default: ''
+      build_underscored_packages:
+        description: 'Optional comma-separated underscored package names to build (for example: _pkg1,_pkg2)'
+        required: false
+        default: ''
       skip_if_in_other_repos:
         description: 'Skip package build if same package exists in other distro repos'
         required: false
@@ -44,6 +48,7 @@ jobs:
         run: |
           printf '\033[1;34m==> Stage: Build Arch packages\033[0m\n'
           SKIP_INPUT="${{ github.event.inputs.skip_packages }}"
+          UNDERSCORED_INPUT="$(echo "${{ github.event.inputs.build_underscored_packages }}" | tr -d ' ')"
           SKIP_IF_OTHER="${{ github.event.inputs.skip_if_in_other_repos }}"
 
           pacman -Syu --noconfirm gnupg sudo
@@ -52,7 +57,12 @@ jobs:
           
           for pkgdir in */; do
             pkgname=$(basename "$pkgdir")
-            [[ "$pkgname" == _* ]] && continue
+            if [[ "$pkgname" == _* ]]; then
+              if [ -z "$UNDERSCORED_INPUT" ] || ! echo ",$UNDERSCORED_INPUT," | grep -q ",$pkgname,"; then
+                echo "Skipping $pkgname (starts with underscore; not selected in build_underscored_packages)"
+                continue
+              fi
+            fi
             [ -f "$pkgdir/PKGBUILD" ] || continue
 
             # Skip packages provided from workflow_dispatch input
@@ -218,6 +228,7 @@ jobs:
         run: |
           printf '\033[1;34m==> Stage: Build Fedora packages\033[0m\n'
           SKIP_INPUT="${{ github.event.inputs.skip_packages }}"
+          UNDERSCORED_INPUT="$(echo "${{ github.event.inputs.build_underscored_packages }}" | tr -d ' ')"
           SKIP_IF_OTHER="${{ github.event.inputs.skip_if_in_other_repos }}"
 
           dnf install -y rpm-build rpmdevtools dnf-plugins-core rpm-sign gnupg2 pinentry sudo spectool createrepo_c
@@ -229,17 +240,17 @@ jobs:
           rpmdev-setuptree
           
           for spec in $(ls "$FEDORA_DIR"/*.spec 2>/dev/null | xargs -n1 basename); do
-            case "$(basename "$spec")" in
-              _*)
-                echo "Skipping $spec (starts with underscore)"
+            specname=$(basename "$spec" .spec)
+            if [[ "$specname" == _* ]]; then
+              if [ -z "$UNDERSCORED_INPUT" ] || ! echo ",$UNDERSCORED_INPUT," | grep -q ",$specname,"; then
+                echo "Skipping $spec (starts with underscore; not selected in build_underscored_packages)"
                 continue
-                ;;
-            esac
+              fi
+            fi
             spec_path="$FEDORA_DIR/$spec"
             [ -f "$spec_path" ] || continue
             
             # Extract version and release from spec file
-            specname=$(basename "$spec" .spec)
             pkgver=$(grep "^Version:" "$spec_path" | awk '{print $2}')
             pkgrel=$(grep "^Release:" "$spec_path" | awk '{print $2}' | cut -d'%' -f1)
             pkgver_full="${specname}-${pkgver}-${pkgrel}"
@@ -421,6 +432,7 @@ jobs:
         run: |
           printf '\033[1;34m==> Stage: Build Void packages\033[0m\n'
           SKIP_INPUT="${{ github.event.inputs.skip_packages }}"
+          UNDERSCORED_INPUT="$(echo "${{ github.event.inputs.build_underscored_packages }}" | tr -d ' ')"
           SKIP_IF_OTHER="${{ github.event.inputs.skip_if_in_other_repos }}"
 
           VOID_DIR=/tmp/packages/void
@@ -436,12 +448,12 @@ jobs:
           for pkgdir in "$VOID_DIR"/*; do
             [ -d "$pkgdir" ] || continue
             pkgname=$(basename "$pkgdir")
-            case "$pkgname" in
-              _*)
-              echo "Skipping $pkgdir (starts with underscore)"
-              continue
-              ;;
-            esac
+            if [[ "$pkgname" == _* ]]; then
+              if [ -z "$UNDERSCORED_INPUT" ] || ! echo ",$UNDERSCORED_INPUT," | grep -q ",$pkgname,"; then
+                echo "Skipping $pkgdir (starts with underscore; not selected in build_underscored_packages)"
+                continue
+              fi
+            fi
             [ -f "$pkgdir/template" ] || continue
 
             # Skip packages provided from workflow_dispatch input
