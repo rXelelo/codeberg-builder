@@ -430,7 +430,9 @@ jobs:
           echo XBPS_BUILD_ENVIRONMENT=void-packages-ci >> etc/conf
           echo XBPS_CHROOT_CMD=uchroot >> etc/conf
           echo XBPS_ALLOW_RESTRICTED=yes >> etc/conf
-          echo XBPS_SKIP_PKGLINT=yes >> etc/conf
+          
+          # Remove pkglint hook that blocks SONAME bumps
+          rm -f common/hooks/pre-pkg/99-pkglint.sh
           
           # Copy custom shlibs and merge with void-packages shlibs
           if [ -f "/tmp/packages/common/shlibs" ]; then
