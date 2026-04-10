@@ -424,6 +424,7 @@ jobs:
           SKIP_IF_OTHER="${{ github.event.inputs.skip_if_in_other_repos }}"
 
           VOID_DIR=/tmp/packages/void
+          cat /tmp/packages/common/shlibs >> /void-packages/common/shlibs
           git clone --depth=1 https://github.com/void-linux/void-packages.git /void-packages
           cd /void-packages
           echo XBPS_BUILD_ENVIRONMENT=void-packages-ci >> etc/conf
