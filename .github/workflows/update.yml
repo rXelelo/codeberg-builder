@@ -180,48 +180,9 @@ jobs:
                   cp "/work/void-packages/srcpkgs/$shlib_pkg/template" "/work/packages/void/$shlib_pkg/template"
                   echo "=> $shlib_pkg checksum updated"
                   
-                  # Build and check for SONAME bumps
-                  echo "=> Building $shlib_pkg to check for SONAME bumps..."
-                  BUILD_OUTPUT=$(sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src pkg $shlib_pkg 2>&1" || true)
-                  
-                  if echo "$BUILD_OUTPUT" | grep -q "SONAME bump detected"; then
-                    echo "=> SONAME bump detected for $shlib_pkg, updating common/shlibs"
-                    
-                    SONAME_LINE=$(echo "$BUILD_OUTPUT" | grep 'please update common/shlibs with this line:' | sed -n 's/.*please update common\/shlibs with this line: "\([^"]*\)".*/\1/p' | head -1)
-                    
-                    if [ -n "$SONAME_LINE" ] && echo "$SONAME_LINE" | grep -q "\.so\."; then
-                      echo "=> Adding to shlibs: $SONAME_LINE"
-                      
-                      LIB_NAME=$(echo "$SONAME_LINE" | awk '{print $1}')
-                      LIB_NAME_ESCAPED=$(echo "$LIB_NAME" | sed 's/\./\\./g')
-                      
-                      if [ -f "/work/packages/common/shlibs" ]; then
-                        sed -i "/^${LIB_NAME_ESCAPED} /d" /work/packages/common/shlibs
-                        echo "$SONAME_LINE" >> /work/packages/common/shlibs
-                        sort -u /work/packages/common/shlibs -o /work/packages/common/shlibs
-                        cp /work/packages/common/shlibs /work/void-packages/common/shlibs
-                        SHLIBS_UPDATED=true
-                        
-                        echo "=> Retrying build with updated shlibs..."
-                        if sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src pkg $shlib_pkg 2>&1"; then
-                          echo "=> $shlib_pkg built successfully after shlibs update"
-                          
-                          # Install the package into masterdir so it's available for dependent packages
-                          echo "=> Installing $shlib_pkg into masterdir..."
-                          sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src install $shlib_pkg 2>&1" || true
-                          
-                          UPDATED="$UPDATED $shlib_pkg"
-                        else
-                          echo "=> WARNING: build still failed for $shlib_pkg after shlibs update, rolling back"
-                          git -C /work/packages checkout -- "void/$shlib_pkg/template" "common/shlibs"
-                          SHLIBS_UPDATED=false
-                        fi
-                      fi
-                    else
-                      echo "=> WARNING: could not extract SONAME line, rolling back"
-                      git -C /work/packages checkout -- "void/$shlib_pkg/template"
-                    fi
-                  else
+                  # Build the package
+                  echo "=> Building $shlib_pkg..."
+                  if sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src pkg $shlib_pkg 2>&1"; then
                     echo "=> $shlib_pkg built successfully"
                     
                     # Install the package into masterdir so it's available for dependent packages
@@ -229,6 +190,9 @@ jobs:
                     sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src install $shlib_pkg 2>&1" || true
                     
                     UPDATED="$UPDATED $shlib_pkg"
+                  else
+                    echo "=> WARNING: build failed for $shlib_pkg, rolling back"
+                    git -C /work/packages checkout -- "void/$shlib_pkg/template"
                   fi
                 else
                   echo "=> WARNING: checksum failed for $shlib_pkg, rolling back"
@@ -237,6 +201,43 @@ jobs:
               fi
             fi
           done
+          
+          # Third pass: update common/shlibs for packages that were updated
+          if [ -n "$UPDATED" ] && [ -f "/work/packages/common/shlibs" ]; then
+            echo "=> Updating common/shlibs for updated packages..."
+            
+            for updated_pkg in $UPDATED; do
+              # Check if this package has entries in common/shlibs
+              if grep -q " ${updated_pkg}-" /work/packages/common/shlibs 2>/dev/null; then
+                echo "=> Checking shlibs entries for $updated_pkg..."
+                
+                # Get new version from template
+                NEW_PKG_VER=$(grep "^version=" "/work/packages/void/$updated_pkg/template" | cut -d= -f2)
+                NEW_PKG_REV=$(grep "^revision=" "/work/packages/void/$updated_pkg/template" | cut -d= -f2)
+                NEW_PKG_FULL="${updated_pkg}-${NEW_PKG_VER}_${NEW_PKG_REV}"
+                
+                # Update all shlibs entries for this package
+                while IFS= read -r line; do
+                  if echo "$line" | grep -q " ${updated_pkg}-"; then
+                    OLD_ENTRY="$line"
+                    LIB_NAME=$(echo "$line" | awk '{print $1}')
+                    OLD_PKG_FULL=$(echo "$line" | awk '{print $2}')
+                    
+                    if [ "$OLD_PKG_FULL" != "$NEW_PKG_FULL" ]; then
+                      echo "=> Updating shlibs: $LIB_NAME $OLD_PKG_FULL -> $NEW_PKG_FULL"
+                      sed -i "s|^${LIB_NAME} ${OLD_PKG_FULL}|${LIB_NAME} ${NEW_PKG_FULL}|" /work/packages/common/shlibs
+                      SHLIBS_UPDATED=true
+                    fi
+                  fi
+                done < /work/packages/common/shlibs
+              fi
+            done
+            
+            if [ "$SHLIBS_UPDATED" = true ]; then
+              cp /work/packages/common/shlibs /work/void-packages/common/shlibs
+              echo "=> common/shlibs updated"
+            fi
+          fi
 
           UPDATED=$(echo "$UPDATED" | xargs)
           if [ -n "$UPDATED" ]; then
