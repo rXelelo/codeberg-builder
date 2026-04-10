@@ -89,51 +89,7 @@ jobs:
             if sudo -Eu builder sh -c "cd /work/void-packages && xgensum -i srcpkgs/$pkg/template"; then
               cp "/work/void-packages/srcpkgs/$pkg/template" "/work/packages/void/$pkg/template"
               echo "=> $pkg checksum updated"
-              
-              # Try building the package to detect SONAME bumps
-              echo "=> Building $pkg to check for SONAME bumps..."
-              BUILD_OUTPUT=$(sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src pkg $pkg 2>&1" || true)
-              
-              if echo "$BUILD_OUTPUT" | grep -q "SONAME bump detected"; then
-                echo "=> SONAME bump detected for $pkg, updating common/shlibs"
-                
-                # Extract SONAME information from error message
-                # Format: => ERROR: pkg-version: please update common/shlibs with this line: "libname.so.X pkg-version"
-                SONAME_LINE=$(echo "$BUILD_OUTPUT" | grep 'please update common/shlibs with this line:' | sed -n 's/.*please update common\/shlibs with this line: "\([^"]*\)".*/\1/p' | head -1)
-                
-                if [ -n "$SONAME_LINE" ] && echo "$SONAME_LINE" | grep -q "\.so\."; then
-                  echo "=> Adding to shlibs: $SONAME_LINE"
-                  
-                  # Extract library name
-                  LIB_NAME=$(echo "$SONAME_LINE" | awk '{print $1}')
-                  LIB_NAME_ESCAPED=$(echo "$LIB_NAME" | sed 's/\./\\./g')
-                  
-                  if [ -f "/work/packages/common/shlibs" ]; then
-                    sed -i "/^${LIB_NAME_ESCAPED} /d" /work/packages/common/shlibs
-                    echo "$SONAME_LINE" >> /work/packages/common/shlibs
-                    sort -u /work/packages/common/shlibs -o /work/packages/common/shlibs
-                    cp /work/packages/common/shlibs /work/void-packages/common/shlibs
-                    SHLIBS_UPDATED=true
-                    
-                    # Retry build with updated shlibs
-                    echo "=> Retrying build with updated shlibs..."
-                    if sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src pkg $pkg 2>&1"; then
-                      echo "=> $pkg built successfully after shlibs update"
-                      UPDATED="$UPDATED $pkg"
-                    else
-                      echo "=> WARNING: build still failed for $pkg after shlibs update, rolling back"
-                      git -C /work/packages checkout -- "void/$pkg/template" "common/shlibs"
-                      SHLIBS_UPDATED=false
-                    fi
-                  fi
-                else
-                  echo "=> WARNING: could not extract SONAME line, rolling back"
-                  git -C /work/packages checkout -- "void/$pkg/template"
-                fi
-              else
-                echo "=> $pkg built successfully"
-                UPDATED="$UPDATED $pkg"
-              fi
+              UPDATED="$UPDATED $pkg"
             else
               echo "=> WARNING: checksum failed for $pkg, rolling back"
               git -C /work/packages checkout -- "void/$pkg/template"
