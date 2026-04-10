@@ -87,7 +87,50 @@ jobs:
             if sudo -Eu builder sh -c "cd /work/void-packages && xgensum -i srcpkgs/$pkg/template"; then
               cp "/work/void-packages/srcpkgs/$pkg/template" "/work/packages/void/$pkg/template"
               echo "=> $pkg checksum updated"
-              UPDATED="$UPDATED $pkg"
+              
+              # Try building the package to detect SONAME bumps
+              echo "=> Building $pkg to check for SONAME bumps..."
+              BUILD_OUTPUT=$(sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src pkg $pkg 2>&1" || true)
+              
+              if echo "$BUILD_OUTPUT" | grep -q "SONAME bump detected"; then
+                echo "=> SONAME bump detected for $pkg, updating common/shlibs"
+                
+                # Extract SONAME information from error message
+                SONAME_LINE=$(echo "$BUILD_OUTPUT" | grep "please update common/shlibs with this line:" -A1 | tail -1 | sed 's/^=> ERROR: //' | xargs)
+                
+                if [ -n "$SONAME_LINE" ]; then
+                  echo "=> Adding to shlibs: $SONAME_LINE"
+                  
+                  # Extract library name to check if it already exists
+                  LIB_NAME=$(echo "$SONAME_LINE" | awk '{print $1}')
+                  
+                  # Remove old entry if exists and add new one
+                  if [ -f "/work/packages/common/shlibs" ]; then
+                    sed -i "/^${LIB_NAME} /d" /work/packages/common/shlibs
+                    echo "$SONAME_LINE" >> /work/packages/common/shlibs
+                    sort -u /work/packages/common/shlibs -o /work/packages/common/shlibs
+                    
+                    # Copy updated shlibs to void-packages
+                    cp /work/packages/common/shlibs /work/void-packages/common/shlibs
+                    
+                    # Retry build with updated shlibs
+                    echo "=> Retrying build with updated shlibs..."
+                    if sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src pkg $pkg 2>&1"; then
+                      echo "=> $pkg built successfully after shlibs update"
+                      UPDATED="$UPDATED $pkg"
+                    else
+                      echo "=> WARNING: build still failed for $pkg after shlibs update, rolling back"
+                      git -C /work/packages checkout -- "void/$pkg/template" "common/shlibs"
+                    fi
+                  fi
+                else
+                  echo "=> WARNING: could not extract SONAME line, rolling back"
+                  git -C /work/packages checkout -- "void/$pkg/template"
+                fi
+              else
+                echo "=> $pkg built successfully"
+                UPDATED="$UPDATED $pkg"
+              fi
             else
               echo "=> WARNING: checksum failed for $pkg, rolling back"
               git -C /work/packages checkout -- "void/$pkg/template"
@@ -110,6 +153,6 @@ jobs:
           cd /work/packages
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add void/
+          git add void/ common/shlibs
           git commit -m "void: auto-update ${{ steps.autoupdate.outputs.updated_packages }}"
           git push
