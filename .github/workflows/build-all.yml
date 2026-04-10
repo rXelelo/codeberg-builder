@@ -454,7 +454,10 @@ jobs:
             echo "=> Custom shlibs merged"
           fi
           
+          # Copy templates to srcpkgs (but not shlibs files)
           cp -r "$VOID_DIR"/* srcpkgs/
+          # Remove any shlibs file that might have been copied accidentally
+          find srcpkgs/ -name "shlibs" -type f -delete
           chown -R builder:builder /void-packages
           sudo -Eu builder ./xbps-src binary-bootstrap
           xbps-install -S
