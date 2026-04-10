@@ -526,6 +526,26 @@ jobs:
             # Build package
             sudo -Eu builder sh -c "cd /void-packages && ./xbps-src -E pkg $pkgname"
             
+            # After successful build, check if package provides shlibs and update common/shlibs
+            if [ -f "/void-packages/common/shlibs" ] && grep -q " ${pkgname}-" /void-packages/common/shlibs 2>/dev/null; then
+              echo "=> Checking for SONAME changes in built package..."
+              
+              # Get the shlib-provides from the built package
+              SHLIB_PROVIDES_FILE="/void-packages/masterdir-x86_64/builddir/.xbps-${pkgname}/rdeps/${pkgname}-shlib-provides"
+              if [ -f "$SHLIB_PROVIDES_FILE" ]; then
+                while IFS= read -r soname; do
+                  [ -z "$soname" ] && continue
+                  
+                  # Check if this SONAME needs to be added/updated in shlibs
+                  if ! grep -q "^${soname} " /void-packages/common/shlibs 2>/dev/null; then
+                    echo "=> Adding new SONAME to shlibs: $soname $pkgver_full"
+                    echo "$soname $pkgver_full" >> /void-packages/common/shlibs
+                    sort -u /void-packages/common/shlibs -o /void-packages/common/shlibs
+                  fi
+                done < "$SHLIB_PROVIDES_FILE"
+              fi
+            fi
+            
             # Skip GPG signing (not supported in container)
             
             # Copy built packages to output
