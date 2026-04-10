@@ -140,11 +140,12 @@ jobs:
             fi
           done
 
-          # Second pass: update all packages listed in common/shlibs
+          # Second pass: update all packages listed in common/shlibs (in dependency order)
           echo "=> Checking and updating all packages from common/shlibs..."
           
-          # List of packages to check from common/shlibs
-          SHLIBS_PACKAGES="libspng hyprutils hyprlang aquamarine hyprgraphics hyprcursor libtoml++ sdbus-cpp"
+          # List of packages to check from common/shlibs (in dependency order)
+          # hyprutils must be first as other packages depend on it
+          SHLIBS_PACKAGES="libspng libtoml++ sdbus-cpp hyprutils hyprlang hyprcursor aquamarine hyprgraphics"
           
           for shlib_pkg in $SHLIBS_PACKAGES; do
             if [ ! -d "/work/packages/void/$shlib_pkg" ] || [ ! -f "/work/packages/void/$shlib_pkg/template" ]; then
@@ -204,6 +205,11 @@ jobs:
                         echo "=> Retrying build with updated shlibs..."
                         if sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src pkg $shlib_pkg 2>&1"; then
                           echo "=> $shlib_pkg built successfully after shlibs update"
+                          
+                          # Install the package into masterdir so it's available for dependent packages
+                          echo "=> Installing $shlib_pkg into masterdir..."
+                          sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src install $shlib_pkg 2>&1" || true
+                          
                           UPDATED="$UPDATED $shlib_pkg"
                         else
                           echo "=> WARNING: build still failed for $shlib_pkg after shlibs update, rolling back"
@@ -217,6 +223,11 @@ jobs:
                     fi
                   else
                     echo "=> $shlib_pkg built successfully"
+                    
+                    # Install the package into masterdir so it's available for dependent packages
+                    echo "=> Installing $shlib_pkg into masterdir..."
+                    sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src install $shlib_pkg 2>&1" || true
+                    
                     UPDATED="$UPDATED $shlib_pkg"
                   fi
                 else
