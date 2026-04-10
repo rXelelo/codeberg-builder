@@ -482,6 +482,24 @@ jobs:
             cp "$pkgdir/template" /void-packages/srcpkgs/$pkgname/
             chown -R builder:builder /void-packages/srcpkgs/$pkgname
             
+            # Update shlibs if this package has entries
+            if [ -f "/void-packages/common/shlibs" ] && grep -q " ${pkgname}-" /void-packages/common/shlibs 2>/dev/null; then
+              echo "=> Pre-updating shlibs entries for $pkgname..."
+              
+              # Update all shlibs entries for this package with new version
+              while IFS= read -r line; do
+                if echo "$line" | grep -q " ${pkgname}-"; then
+                  LIB_NAME=$(echo "$line" | awk '{print $1}')
+                  OLD_PKG_FULL=$(echo "$line" | awk '{print $2}')
+                  
+                  if [ "$OLD_PKG_FULL" != "$pkgver_full" ]; then
+                    echo "=> Updating shlibs: $LIB_NAME $OLD_PKG_FULL -> $pkgver_full"
+                    sed -i "s|^${LIB_NAME} ${OLD_PKG_FULL}|${LIB_NAME} ${pkgver_full}|" /void-packages/common/shlibs
+                  fi
+                fi
+              done < /void-packages/common/shlibs
+            fi
+            
             # Build package
             sudo -Eu builder sh -c "cd /void-packages && ./xbps-src -E pkg $pkgname"
             
