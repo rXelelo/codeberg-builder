@@ -47,33 +47,81 @@ jobs:
           echo XBPS_CHROOT_CMD=uchroot >> etc/conf
           echo XBPS_ALLOW_RESTRICTED=yes >> etc/conf
           sudo -Eu builder ./xbps-src binary-bootstrap
+
+          # Merge /work/packages/common/shlibs into void-packages/common/shlibs
+          # For each line: strip base name, delete old .so.X entry, append new one
           sudo -Eu builder bash -c '
-          while IFS= read -r line; do
+            while IFS= read -r line; do
               [[ -z "$line" ]] && continue
               lib=$(echo "$line" | awk "{print \$1}")
               base=$(echo "$lib" | sed "s/\.so\.[0-9]*$//")
-              sed -i "/^${base}\.so\./d" /void-packages/common/shlibs
-              echo "$line" >> /void-packages/common/shlibs
-            done < /tmp/packages/common/shlibs
-          '          
+              sed -i "/^${base}\.so\./d" /work/void-packages/common/shlibs
+              echo "$line" >> /work/void-packages/common/shlibs
+            done < /work/packages/common/shlibs
+          '
 
       - name: Check and apply updates
         id: autoupdate
         run: |
           printf '\033[1;34m==> Stage: Check and apply updates\033[0m\n'
           UPDATED=""
-          SHLIBS_UPDATED=false
 
-          # First pass: check for updates and build packages
+          # ── Helper: build a package, detect SONAME bump, patch shlibs, retry once ──
+          build_pkg() {
+            local pkg="$1"
+            echo "=> Building $pkg..."
+
+            BUILD_LOG=$(sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src pkg $pkg 2>&1")
+            BUILD_EXIT=$?
+            echo "$BUILD_LOG"
+
+            if [ $BUILD_EXIT -ne 0 ]; then
+              # Check for SONAME bump error and extract the suggested new shlibs line
+              NEW_SHLIB_LINE=$(echo "$BUILD_LOG" | grep 'please update common/shlibs with this line:' | sed 's/.*this line: *"\(.*\)"/\1/')
+
+              if [ -n "$NEW_SHLIB_LINE" ]; then
+                echo "=> SONAME bump detected for $pkg, updating common/shlibs: $NEW_SHLIB_LINE"
+
+                # Patch void-packages/common/shlibs
+                lib=$(echo "$NEW_SHLIB_LINE" | awk '{print $1}')
+                base=$(echo "$lib" | sed 's/\.so\.[0-9]*$//')
+                sudo -Eu builder bash -c "
+                  sed -i '/^${base}\.so\./d' /work/void-packages/common/shlibs
+                  echo '${NEW_SHLIB_LINE}' >> /work/void-packages/common/shlibs
+                "
+
+                # Also patch /work/packages/common/shlibs so it gets committed
+                sed -i "/^${base}\.so\./d" /work/packages/common/shlibs
+                echo "$NEW_SHLIB_LINE" >> /work/packages/common/shlibs
+                echo "=> Retrying build of $pkg after shlibs patch..."
+
+                BUILD_LOG2=$(sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src pkg $pkg 2>&1")
+                BUILD_EXIT2=$?
+                echo "$BUILD_LOG2"
+
+                if [ $BUILD_EXIT2 -ne 0 ]; then
+                  echo "=> WARNING: build of $pkg failed even after shlibs patch"
+                  return 1
+                fi
+                echo "=> $pkg built successfully after shlibs patch"
+                return 0
+              fi
+
+              echo "=> WARNING: build failed for $pkg (non-SONAME error)"
+              return 1
+            fi
+
+            echo "=> $pkg built successfully"
+            return 0
+          }
+
+          # ── First pass: check for updates across all packages ──
           for pkgdir in /work/packages/void/*; do
             [ -d "$pkgdir" ] || continue
             pkg=$(basename "$pkgdir")
 
             case "$pkg" in
-              _*)
-                echo "=> Skipping $pkg (starts with underscore)"
-                continue
-                ;;
+              _*) echo "=> Skipping $pkg (starts with underscore)"; continue ;;
             esac
 
             [ -f "$pkgdir/template" ] || continue
@@ -92,7 +140,6 @@ jobs:
 
             sed -i "s|^version=.*|version=${NEW_VER}|" "/work/packages/void/$pkg/template"
             sed -i "s|^revision=.*|revision=1|" "/work/packages/void/$pkg/template"
-
             cp "/work/packages/void/$pkg/template" "/work/void-packages/srcpkgs/$pkg/template"
             chown builder:builder "/work/void-packages/srcpkgs/$pkg/template"
 
@@ -106,105 +153,65 @@ jobs:
             fi
           done
 
-          # Second pass: update all packages listed in common/shlibs (in dependency order)
-          echo "=> Checking and updating all packages from common/shlibs..."
-          
-          # List of packages to check from common/shlibs (in dependency order)
-          # hyprutils must be first as other packages depend on it
+          # ── Second pass: build shlibs packages in dependency order ──
+          # Check if version in common/shlibs matches what is in srcpkgs template.
+          # If they differ, build the package (with SONAME bump auto-fix).
+          echo "=> Checking shlibs packages for version mismatches..."
           SHLIBS_PACKAGES="libspng libtoml++ sdbus-cpp hyprutils hyprlang hyprcursor aquamarine hyprgraphics"
-          
+
           for shlib_pkg in $SHLIBS_PACKAGES; do
-            if [ ! -d "/work/packages/void/$shlib_pkg" ] || [ ! -f "/work/packages/void/$shlib_pkg/template" ]; then
-              echo "=> Skipping $shlib_pkg (not found in packages)"
+            tmpl="/work/void-packages/srcpkgs/$shlib_pkg/template"
+            [ -f "$tmpl" ] || { echo "=> Skipping $shlib_pkg (no template)"; continue; }
+
+            TMPL_VER=$(grep "^version=" "$tmpl" | cut -d= -f2)
+            TMPL_REV=$(grep "^revision=" "$tmpl" | cut -d= -f2)
+            TMPL_FULL="${shlib_pkg}-${TMPL_VER}_${TMPL_REV}"
+
+            # Find the current shlibs entry for this package (match by package name column)
+            SHLIBS_ENTRY=$(grep " ${shlib_pkg}-" /work/packages/common/shlibs 2>/dev/null | head -1)
+            SHLIBS_PKG_FULL=$(echo "$SHLIBS_ENTRY" | awk '{print $2}')
+
+            if [ "$SHLIBS_PKG_FULL" = "$TMPL_FULL" ]; then
+              echo "=> $shlib_pkg shlibs up to date ($TMPL_FULL), skipping build"
               continue
             fi
-            
-            # Skip if already updated in first pass
-            if echo "$UPDATED" | grep -q "$shlib_pkg"; then
-              echo "=> $shlib_pkg already updated in first pass"
-              continue
-            fi
-            
-            echo "=> Checking $shlib_pkg for updates..."
-            
-            UPDATE=$(sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src update-check $shlib_pkg 2>/dev/null" | tail -1 || true)
-            
-            if echo "$UPDATE" | grep -q ' -> '; then
-              OLD_VER=$(echo "$UPDATE" | awk -F' -> ' '{print $1}' | rev | cut -d- -f1 | rev)
-              NEW_VER=$(echo "$UPDATE" | awk -F' -> ' '{print $2}' | rev | cut -d- -f1 | rev | tr -d '\n\r')
-              
-              if [ -n "$NEW_VER" ] && [ "$OLD_VER" != "$NEW_VER" ]; then
-                echo "=> $shlib_pkg: $OLD_VER -> $NEW_VER"
-                
-                sed -i "s|^version=.*|version=${NEW_VER}|" "/work/packages/void/$shlib_pkg/template"
-                sed -i "s|^revision=.*|revision=1|" "/work/packages/void/$shlib_pkg/template"
-                
-                cp "/work/packages/void/$shlib_pkg/template" "/work/void-packages/srcpkgs/$shlib_pkg/template"
-                chown builder:builder "/work/void-packages/srcpkgs/$shlib_pkg/template"
-                
-                if sudo -Eu builder sh -c "cd /work/void-packages && xgensum -i srcpkgs/$shlib_pkg/template"; then
-                  cp "/work/void-packages/srcpkgs/$shlib_pkg/template" "/work/packages/void/$shlib_pkg/template"
-                  echo "=> $shlib_pkg checksum updated"
-                  
-                  # Build the package
-                  echo "=> Building $shlib_pkg..."
-                  if sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src pkg $shlib_pkg 2>&1"; then
-                    echo "=> $shlib_pkg built successfully"
-                    
-                    # Install the package into masterdir so it's available for dependent packages
-                    echo "=> Installing $shlib_pkg into masterdir..."
-                    sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src install $shlib_pkg 2>&1" || true
-                    
-                    UPDATED="$UPDATED $shlib_pkg"
+
+            echo "=> $shlib_pkg shlibs mismatch: shlibs=$SHLIBS_PKG_FULL template=$TMPL_FULL, building..."
+
+            # If not already updated in first pass, check for upstream update first
+            if ! echo "$UPDATED" | grep -qw "$shlib_pkg"; then
+              UPDATE=$(sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src update-check $shlib_pkg 2>/dev/null" | tail -1 || true)
+              if echo "$UPDATE" | grep -q ' -> '; then
+                OLD_VER=$(echo "$UPDATE" | awk -F' -> ' '{print $1}' | rev | cut -d- -f1 | rev)
+                NEW_VER=$(echo "$UPDATE" | awk -F' -> ' '{print $2}' | rev | cut -d- -f1 | rev | tr -d '\n\r')
+                if [ -n "$NEW_VER" ] && [ "$OLD_VER" != "$NEW_VER" ]; then
+                  echo "=> $shlib_pkg upstream update: $OLD_VER -> $NEW_VER"
+                  sed -i "s|^version=.*|version=${NEW_VER}|" "/work/packages/void/$shlib_pkg/template"
+                  sed -i "s|^revision=.*|revision=1|" "/work/packages/void/$shlib_pkg/template"
+                  cp "/work/packages/void/$shlib_pkg/template" "$tmpl"
+                  chown builder:builder "$tmpl"
+                  if sudo -Eu builder sh -c "cd /work/void-packages && xgensum -i srcpkgs/$shlib_pkg/template"; then
+                    cp "$tmpl" "/work/packages/void/$shlib_pkg/template"
+                    echo "=> $shlib_pkg checksum updated"
                   else
-                    echo "=> WARNING: build failed for $shlib_pkg, rolling back"
+                    echo "=> WARNING: checksum failed for $shlib_pkg, rolling back"
                     git -C /work/packages checkout -- "void/$shlib_pkg/template"
+                    continue
                   fi
-                else
-                  echo "=> WARNING: checksum failed for $shlib_pkg, rolling back"
-                  git -C /work/packages checkout -- "void/$shlib_pkg/template"
                 fi
               fi
             fi
-          done
-          
-          # Third pass: update common/shlibs for packages that were updated
-          if [ -n "$UPDATED" ] && [ -f "/work/packages/common/shlibs" ]; then
-            echo "=> Updating common/shlibs for updated packages..."
-            
-            for updated_pkg in $UPDATED; do
-              # Check if this package has entries in common/shlibs
-              if grep -q " ${updated_pkg}-" /work/packages/common/shlibs 2>/dev/null; then
-                echo "=> Checking shlibs entries for $updated_pkg..."
-                
-                # Get new version from template
-                NEW_PKG_VER=$(grep "^version=" "/work/packages/void/$updated_pkg/template" | cut -d= -f2)
-                NEW_PKG_REV=$(grep "^revision=" "/work/packages/void/$updated_pkg/template" | cut -d= -f2)
-                NEW_PKG_FULL="${updated_pkg}-${NEW_PKG_VER}_${NEW_PKG_REV}"
-                
-                # Update all shlibs entries for this package
-                while IFS= read -r line; do
-                  if echo "$line" | grep -q " ${updated_pkg}-"; then
-                    OLD_ENTRY="$line"
-                    LIB_NAME=$(echo "$line" | awk '{print $1}')
-                    OLD_PKG_FULL=$(echo "$line" | awk '{print $2}')
-                    
-                    if [ "$OLD_PKG_FULL" != "$NEW_PKG_FULL" ]; then
-                      echo "=> Updating shlibs: $LIB_NAME $OLD_PKG_FULL -> $NEW_PKG_FULL"
-                      sed -i "s|^${LIB_NAME} ${OLD_PKG_FULL}|${LIB_NAME} ${NEW_PKG_FULL}|" /work/packages/common/shlibs
-                      SHLIBS_UPDATED=true
-                    fi
-                  fi
-                done < /work/packages/common/shlibs
-              fi
-            done
-            
-            if [ "$SHLIBS_UPDATED" = true ]; then
-              cp /work/packages/common/shlibs /work/void-packages/common/shlibs
-              echo "=> common/shlibs updated"
-            fi
-          fi
 
+            if build_pkg "$shlib_pkg"; then
+              sudo -Eu builder sh -c "cd /work/void-packages && ./xbps-src install $shlib_pkg 2>&1" || true
+              UPDATED="$UPDATED $shlib_pkg"
+            else
+              echo "=> WARNING: skipping $shlib_pkg due to build failure"
+              git -C /work/packages checkout -- "void/$shlib_pkg/template" 2>/dev/null || true
+            fi
+          done
+
+          # ── Output ──
           UPDATED=$(echo "$UPDATED" | xargs)
           if [ -n "$UPDATED" ]; then
             echo "has_updates=true" >> "$GITHUB_OUTPUT"

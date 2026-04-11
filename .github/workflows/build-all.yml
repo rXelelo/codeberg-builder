@@ -426,7 +426,7 @@ jobs:
           VOID_DIR=/tmp/packages/void
           
           git clone --depth=1 https://github.com/void-linux/void-packages.git /void-packages
-          rm -rf /void-packages/srcpkgs/ghostty-terminfo /void-packages/srcpkgs/ghostty
+          rm -rf /void-packages/srcpkgs/{ghostty-terminfo,ghostty,zig}
           cd /void-packages
           echo XBPS_BUILD_ENVIRONMENT=void-packages-ci >> etc/conf
           echo XBPS_CHROOT_CMD=uchroot >> etc/conf
