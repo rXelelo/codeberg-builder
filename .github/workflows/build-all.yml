@@ -436,6 +436,7 @@ jobs:
           
           cp -r "$VOID_DIR"/* srcpkgs/
           chown -R builder:builder /void-packages
+          rm -rf /void-packages/srcpkgs/ghostty-terminfo /void-packages/srcpkgs/ghostty
           sudo -Eu builder ./xbps-src binary-bootstrap
           xbps-install -S
           sudo -Eu builder xbps-install -r /void-packages/masterdir-x86_64 jq curl -y
