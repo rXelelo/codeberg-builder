@@ -432,7 +432,7 @@ jobs:
           echo XBPS_ALLOW_RESTRICTED=yes >> etc/conf
           
           # Remove pkglint hook that blocks SONAME bumps
-          rm -f common/hooks/pre-pkg/99-pkglint.sh
+          #rm -f common/hooks/pre-pkg/99-pkglint.sh
           
           # Copy custom shlibs and merge with void-packages shlibs
           if [ -f "/tmp/packages/common/shlibs" ]; then
