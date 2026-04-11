@@ -410,7 +410,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-      
+
+      - name: Maximize Build Space & Swap
+        uses: pierotofy/set-swap-space@v1.0
+        with:
+          swap-size-gb: 12  # Gives you plenty of breathing room
+
       - name: Clone Packages and Repo
         run: |
           printf '\033[1;34m==> Stage: Clone Packages and Repo (Void)\033[0m\n'
