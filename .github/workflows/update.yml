@@ -47,6 +47,15 @@ jobs:
           echo XBPS_CHROOT_CMD=uchroot >> etc/conf
           echo XBPS_ALLOW_RESTRICTED=yes >> etc/conf
           sudo -Eu builder ./xbps-src binary-bootstrap
+          sudo -Eu builder bash -c '
+          while IFS= read -r line; do
+              [[ -z "$line" ]] && continue
+              lib=$(echo "$line" | awk "{print \$1}")
+              base=$(echo "$lib" | sed "s/\.so\.[0-9]*$//")
+              sed -i "/^${base}\.so\./d" /void-packages/common/shlibs
+              echo "$line" >> /void-packages/common/shlibs
+            done < /tmp/packages/common/shlibs
+          '          
 
       - name: Check and apply updates
         id: autoupdate
