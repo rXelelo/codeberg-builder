@@ -434,34 +434,13 @@ jobs:
           # Remove pkglint hook that blocks SONAME bumps
           #rm -f common/hooks/pre-pkg/99-pkglint.sh
           
-          # Copy custom shlibs and merge with void-packages shlibs
-          if [ -f "/tmp/packages/common/shlibs" ]; then
-            echo "=> Merging custom shlibs with void-packages shlibs..."
-            
-            # For each line in custom shlibs, update or add to void-packages shlibs
-            while IFS= read -r line; do
-              [ -z "$line" ] && continue
-              LIB_NAME=$(echo "$line" | awk '{print $1}')
-              PKG_FULL=$(echo "$line" | awk '{print $2}')
-              
-              # Remove old entry if exists
-              sed -i "/^${LIB_NAME} /d" /void-packages/common/shlibs
-              # Add new entry
-              echo "$line" >> /void-packages/common/shlibs
-            done < /tmp/packages/common/shlibs
-            
-            sort -u /void-packages/common/shlibs -o /void-packages/common/shlibs
-            echo "=> Custom shlibs merged"
-          fi
-          
-          # Copy templates to srcpkgs (but not shlibs files)
           cp -r "$VOID_DIR"/* srcpkgs/
-          # Remove any shlibs file that might have been copied accidentally
-          find srcpkgs/ -name "shlibs" -type f -delete
           chown -R builder:builder /void-packages
           sudo -Eu builder ./xbps-src binary-bootstrap
           xbps-install -S
           sudo -Eu builder xbps-install -r /void-packages/masterdir-x86_64 jq curl -y
+          sudo -Eu builder cat /tmp/packages/common/shlibs | tee /void-packages/common/shlibs
+          sudo -Eu builder cat /void-packages/common/shlibs | grep libhyprutils
           
           for pkgdir in "$VOID_DIR"/*; do
             [ -d "$pkgdir" ] || continue
@@ -508,48 +487,11 @@ jobs:
             cp "$pkgdir/template" /void-packages/srcpkgs/$pkgname/
             chown -R builder:builder /void-packages/srcpkgs/$pkgname
             
-            # Update shlibs if this package has entries
-            if [ -f "/void-packages/common/shlibs" ] && grep -q " ${pkgname}-" /void-packages/common/shlibs 2>/dev/null; then
-              echo "=> Pre-updating shlibs entries for $pkgname..."
-              
-              # Update all shlibs entries for this package with new version
-              while IFS= read -r line; do
-                if echo "$line" | grep -q " ${pkgname}-"; then
-                  LIB_NAME=$(echo "$line" | awk '{print $1}')
-                  OLD_PKG_FULL=$(echo "$line" | awk '{print $2}')
-                  
-                  if [ "$OLD_PKG_FULL" != "$pkgver_full" ]; then
-                    echo "=> Updating shlibs: $LIB_NAME $OLD_PKG_FULL -> $pkgver_full"
-                    sed -i "s|^${LIB_NAME} ${OLD_PKG_FULL}|${LIB_NAME} ${pkgver_full}|" /void-packages/common/shlibs
-                  fi
-                fi
-              done < /void-packages/common/shlibs
-            fi
-            
+                       
             # Build package
-            cat /void-packages/common/shlibs
+            #cat /void-packages/common/shlibs
             sudo -Eu builder sh -c "cd /void-packages && ./xbps-src -E pkg $pkgname"
-            
-            # After successful build, check if package provides shlibs and update common/shlibs
-            if [ -f "/void-packages/common/shlibs" ] && grep -q " ${pkgname}-" /void-packages/common/shlibs 2>/dev/null; then
-              echo "=> Checking for SONAME changes in built package..."
-              
-              # Get the shlib-provides from the built package
-              SHLIB_PROVIDES_FILE="/void-packages/masterdir-x86_64/builddir/.xbps-${pkgname}/rdeps/${pkgname}-shlib-provides"
-              if [ -f "$SHLIB_PROVIDES_FILE" ]; then
-                while IFS= read -r soname; do
-                  [ -z "$soname" ] && continue
-                  
-                  # Check if this SONAME needs to be added/updated in shlibs
-                  if ! grep -q "^${soname} " /void-packages/common/shlibs 2>/dev/null; then
-                    echo "=> Adding new SONAME to shlibs: $soname $pkgver_full"
-                    echo "$soname $pkgver_full" >> /void-packages/common/shlibs
-                    sort -u /void-packages/common/shlibs -o /void-packages/common/shlibs
-                  fi
-                done < "$SHLIB_PROVIDES_FILE"
-              fi
-            fi
-            
+                        
             # Skip GPG signing (not supported in container)
             
             # Copy built packages to output
