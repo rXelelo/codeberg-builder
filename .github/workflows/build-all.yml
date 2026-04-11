@@ -527,6 +527,7 @@ jobs:
             fi
             
             # Build package
+            cat /void-packages/common/shlibs
             sudo -Eu builder sh -c "cd /void-packages && ./xbps-src -E pkg $pkgname"
             
             # After successful build, check if package provides shlibs and update common/shlibs
