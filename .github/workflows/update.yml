@@ -35,7 +35,7 @@ jobs:
         run: |
           printf '\033[1;34m==> Stage: Setup void-packages\033[0m\n'
           git clone --depth=1 https://github.com/void-linux/void-packages.git /work/void-packages
-          rm -rf /work/void-packages/srcpkgs/ghostty-terminfo /work/void-packages/srcpkgs/ghostty
+          rm -rf /void-packages/srcpkgs/{ghostty-terminfo,ghostty,zig}
           cp -r /work/packages/void/* /work/void-packages/srcpkgs/
           chown -R builder:builder /work/void-packages
 
