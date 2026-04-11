@@ -426,6 +426,7 @@ jobs:
           VOID_DIR=/tmp/packages/void
           
           git clone --depth=1 https://github.com/void-linux/void-packages.git /void-packages
+          rm -rf /void-packages/srcpkgs/ghostty-terminfo /void-packages/srcpkgs/ghostty
           cd /void-packages
           echo XBPS_BUILD_ENVIRONMENT=void-packages-ci >> etc/conf
           echo XBPS_CHROOT_CMD=uchroot >> etc/conf
@@ -436,7 +437,6 @@ jobs:
           
           cp -r "$VOID_DIR"/* srcpkgs/
           chown -R builder:builder /void-packages
-          rm -rf /void-packages/srcpkgs/ghostty-terminfo /void-packages/srcpkgs/ghostty
           sudo -Eu builder ./xbps-src binary-bootstrap
           xbps-install -S
           sudo -Eu builder xbps-install -r /void-packages/masterdir-x86_64 jq curl -y
