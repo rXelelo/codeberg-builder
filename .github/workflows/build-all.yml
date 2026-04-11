@@ -439,8 +439,8 @@ jobs:
           sudo -Eu builder ./xbps-src binary-bootstrap
           xbps-install -S
           sudo -Eu builder xbps-install -r /void-packages/masterdir-x86_64 jq curl -y
-          sudo -Eu builder cat /tmp/packages/common/shlibs | tee /void-packages/common/shlibs
-          sudo -Eu builder cat /void-packages/common/shlibs | grep libhyprutils
+          sudo -Eu builder bash -c 'cat /tmp/packages/common/shlibs | tee /void-packages/common/shlibs'
+          sudo -Eu builder bash -c 'cat /void-packages/common/shlibs | grep libhyprutils'
           
           for pkgdir in "$VOID_DIR"/*; do
             [ -d "$pkgdir" ] || continue
