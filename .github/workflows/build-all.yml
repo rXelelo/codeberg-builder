@@ -438,11 +438,11 @@ jobs:
           
           chown -R builder:builder /void-packages
           sudo -Eu builder ./xbps-src binary-bootstrap
-          mkdir -p /void-packages/etc/xbps.d/custom/30-myrepo.conf
+          sudo -Eu builder mkdir -p /void-packages/etc/xbps.d/custom/30-myrepo.conf
           sudo -Eu builder tee /void-packages/etc/xbps.d/custom/urepo.conf << 'EOF'
           repository=https://universalrepo.r1xelelo.workers.dev/void
           EOF
-          mkdir -p /void-packages/masterdir-x86_64/var/db/xbps/keys
+          sudo -Eu builder mkdir -p /void-packages/masterdir-x86_64/var/db/xbps/keys
           sudo -Eu builder tee masterdir-x86_64/var/db/xbps/keys/71:17:77:eb:82:c2:02:b6:8d:98:05:8d:19:9c:d5:1e.plist << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
