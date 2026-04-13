@@ -439,7 +439,7 @@ jobs:
           chown -R builder:builder /void-packages
           sudo -Eu builder ./xbps-src binary-bootstrap
           mkdir -p etc/xbps.d/custom/30-myrepo.conf
-          sudo -Eu builder etc/xbps.d/custom/urepo.conf << 'EOF'
+          sudo -Eu builder tee etc/xbps.d/custom/urepo.conf << 'EOF'
           repository=https://universalrepo.r1xelelo.workers.dev/void
           EOF
           mkdir -p masterdir-x86_64/var/db/xbps/keys
