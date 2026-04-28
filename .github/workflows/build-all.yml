@@ -438,25 +438,25 @@ jobs:
           
           chown -R builder:builder /void-packages
           sudo -Eu builder ./xbps-src binary-bootstrap
-          sudo -Eu builder mkdir -p /void-packages/etc/xbps.d/custom/30-myrepo.conf
-          sudo -Eu builder tee /void-packages/etc/xbps.d/custom/urepo.conf << 'EOF'
-          repository=https://universalrepo.r1xelelo.workers.dev/void
-          EOF
-          sudo -Eu builder mkdir -p /void-packages/masterdir-x86_64/var/db/xbps/keys
-          sudo -Eu builder tee masterdir-x86_64/var/db/xbps/keys/71:17:77:eb:82:c2:02:b6:8d:98:05:8d:19:9c:d5:1e.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-                  <key>public-key</key>
-                  <data>LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQ0lqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FnOEFNSUlDQ2dLQ0FnRUF5dGhqeTMzUTAyWWRiTStLVytxdQozeVo0UlV3N0dEcDFMaUo1M0JXSTdhRHRsYXJMNzNGZlRIY0RhVWdrL0FmMVJwMWJaVUlHQ3VHbDVGNEpoQ0dRCllueGNudW0zZzJZdkFnTWhRT0d3ZnVEYVN6ZFhGWFBtelBqNUdKZ2dOR2Y0NUtnWk1uQ000eGlvRTJ0MjBMblIKMmpHWUhMUDBDLzRDd2txM2xSbHBvYjNlTmxzT2VXSVR5Rk5IaU95cmdwZ1VjWldlbnBQU0FWTDZyM2RIQ29YaQo5NnhBNWlEVlZtT1RNYVV2a1p1Qk1la0lOT2paL1NSMENYTmQ4RVVKRTQ4eXNLZlVwL3NVZ2tmb0s3OWZzd0FoCmpCdTRoa3hOeUVPR2FWcFpVVEw1dGhqdWdkTlRQUFRxaDdma2Y4TUwrUTJZNkFQdlpNZlJ4WmdxR0dtWWZNTGMKdUF6aVBidFMwYnI4VVlOcmhGOUo2U0N2Q1hOWG9Hb1FYVkpoOTBWc2FtTDdaV2p2cjIwbWdQOHVuTXdPS0dpaQp4NkJOSEZlNUp0QmJFSk9ETUdpUGdMWG0zK3J1MXJFTnR5U3gweDV2T3lFZWxJdFJ0aUdhSTBxWUJlRWhrdSttCmZoTG14ZHkvbkNibFZ3MVZkeVZkb0RxWTRXK21WQmVYNEJaZzNRK0pKbHNGN3U1Szdld1o1UU5ITFdlbUZjbmMKTWphS1dRY2M5cWFpZEs5MzdyZmZrU283aVk1dlZOWWl2eWQ1b3FaY3YzYXFNNWxqd3QyaUFCNUJ5blFCYWtydAo4ZWwrUStPNTE2VG52ZkVpMG1DZzJJcmlmdTFZMlZyb0pWQVlMRmkraVVJOVgyQW92czZiWkdkOStTc01RNnJFClAwMkV4dGtjdmZReFNCOTVWbHM4RW04Q0F3RUFBUT09Ci0tLS0tRU5EIFBVQkxJQyBLRVktLS0tLQo=</data>
-                  <key>public-key-size</key>
-                  <integer>4096</integer>
-                  <key>signature-by</key>
-                  <string>Universal Repository CI &lt;ci@universalrepo.local&gt;</string>
-          </dict>
-          </plist>
-          EOF
+          #sudo -Eu builder mkdir -p /void-packages/etc/xbps.d/custom
+          #sudo -Eu builder tee /void-packages/etc/xbps.d/custom/urepo.conf << 'EOF'
+          #repository=https://universalrepo.r1xelelo.workers.dev/void
+          #EOF
+          #sudo -Eu builder mkdir -p /void-packages/masterdir-x86_64/var/db/xbps/keys
+          #sudo -Eu builder tee masterdir-x86_64/var/db/xbps/keys/71:17:77:eb:82:c2:02:b6:8d:98:05:8d:19:9c:d5:1e.plist << 'EOF'
+          #<?xml version="1.0" encoding="UTF-8"?>
+          #<!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          #<plist version="1.0">
+          #<dict>
+          #        <key>public-key</key>
+          #        <data>LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQ0lqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FnOEFNSUlDQ2dLQ0FnRUF5dGhqeTMzUTAyWWRiTStLVytxdQozeVo0UlV3N0dEcDFMaUo1M0JXSTdhRHRsYXJMNzNGZlRIY0RhVWdrL0FmMVJwMWJaVUlHQ3VHbDVGNEpoQ0dRCllueGNudW0zZzJZdkFnTWhRT0d3ZnVEYVN6ZFhGWFBtelBqNUdKZ2dOR2Y0NUtnWk1uQ000eGlvRTJ0MjBMblIKMmpHWUhMUDBDLzRDd2txM2xSbHBvYjNlTmxzT2VXSVR5Rk5IaU95cmdwZ1VjWldlbnBQU0FWTDZyM2RIQ29YaQo5NnhBNWlEVlZtT1RNYVV2a1p1Qk1la0lOT2paL1NSMENYTmQ4RVVKRTQ4eXNLZlVwL3NVZ2tmb0s3OWZzd0FoCmpCdTRoa3hOeUVPR2FWcFpVVEw1dGhqdWdkTlRQUFRxaDdma2Y4TUwrUTJZNkFQdlpNZlJ4WmdxR0dtWWZNTGMKdUF6aVBidFMwYnI4VVlOcmhGOUo2U0N2Q1hOWG9Hb1FYVkpoOTBWc2FtTDdaV2p2cjIwbWdQOHVuTXdPS0dpaQp4NkJOSEZlNUp0QmJFSk9ETUdpUGdMWG0zK3J1MXJFTnR5U3gweDV2T3lFZWxJdFJ0aUdhSTBxWUJlRWhrdSttCmZoTG14ZHkvbkNibFZ3MVZkeVZkb0RxWTRXK21WQmVYNEJaZzNRK0pKbHNGN3U1Szdld1o1UU5ITFdlbUZjbmMKTWphS1dRY2M5cWFpZEs5MzdyZmZrU283aVk1dlZOWWl2eWQ1b3FaY3YzYXFNNWxqd3QyaUFCNUJ5blFCYWtydAo4ZWwrUStPNTE2VG52ZkVpMG1DZzJJcmlmdTFZMlZyb0pWQVlMRmkraVVJOVgyQW92czZiWkdkOStTc01RNnJFClAwMkV4dGtjdmZReFNCOTVWbHM4RW04Q0F3RUFBUT09Ci0tLS0tRU5EIFBVQkxJQyBLRVktLS0tLQo=</data>
+          #        <key>public-key-size</key>
+          #        <integer>4096</integer>
+          #        <key>signature-by</key>
+          #        <string>Universal Repository CI &lt;ci@universalrepo.local&gt;</string>
+          #</dict>
+          #</plist>
+          #EOF
           xbps-install -S
           sudo -Eu builder xbps-install -r /void-packages/masterdir-x86_64 jq curl -y
           #sudo -Eu builder bash -c 'cat /tmp/packages/common/shlibs >> /void-packages/common/shlibs'
